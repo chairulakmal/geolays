@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.railway.app/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "buildCommand": "mix deps.get --only prod && MIX_ENV=prod mix compile && MIX_ENV=prod mix release"
+  },
+  "deploy": {
+    "startCommand": "_build/prod/rel/backend/bin/backend start"
+  }
+}
