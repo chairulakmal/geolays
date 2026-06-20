@@ -67,23 +67,55 @@ Template per problem:
   call actually exercises CORS (trap #9).
 
 ## 3. Multi-layer overlay performance
-- **What I built:** Second layer — MLIT land price (2,602 points) as a GeoJSON `circle` layer,
-  added AFTER weather so the dense price layer draws on top (layer order is explicit). Both
-  layers toggle independently via `setLayoutProperty(id, 'visibility', …)` driven by `watch`
-  on local refs (`MapView.client.vue`). Price encoded by both radius and colour.
-- **The trade-off:** GeoJSON source (simple, fine at 2.6k points — MapLibre renders them on
-  the GPU) vs. vector tiles (worth it for 10k+ polygons / server-side simplification). Toggle
-  visibility instead of re-adding layers (cheaper, keeps source cached). **Log-spaced** colour
-  stops, not linear: prices span ¥1.5k–¥54M/m², so a linear ramp would flatten 90% of points.
-- **If asked to extend it:** for much larger/polygon sets, switch the source to vector tiles
-  and move filtering server-side; cluster points at low zoom.
-- **Trap I hit / avoided:** naive "GeoJSON everything" degrades once features hit tens of
-  thousands or become big polygons (full re-parse + CPU geometry). Here 2.6k points is fine;
-  the lesson is knowing the ceiling. Also two styling lessons: (1) a linear colour scale on a
-  heavy-tailed metric (land price) hides the data — use log spacing; (2) a fixed colour domain
-  on a low-variance metric (Tokyo temp varies ~1°C) paints everything one colour — stretch the
-  ramp to the data's actual min/max. (3) a muted basemap makes overlays legible; the default OSM
-  fights them.
+- **What I built:** Three layers, each adding a new geometry type and performance concern:
+  1. **Weather** (139 blurred circle points) — sparse, always fast; establishes the baseline.
+  2. **Land price** (2,602 circle points) — added AFTER weather so the dense price layer draws
+     on top; layer order is explicit (MapLibre renders in insertion order).
+  3. **Buildings** (~10k `Polygon` fill features, OSM Overpass) — added BEFORE the other two
+     so polygon fills render below circle overlays. First polygon/fill layer in the project;
+     toggles off by default so the initial map load stays fast.
+
+  All three toggle independently via `setLayoutProperty(id, 'visibility', …)` driven by
+  `watch` on store refs (`MapView.client.vue`). Each source uses `setData` to update —
+  no layer teardown/recreate. Price encoded by both radius and colour (log-spaced stops).
+
+- **The trade-off:** GeoJSON source (simple, fine at ≤10k features — MapLibre renders on
+  the GPU) vs. vector tiles (worth it for 50k+ features / polygon simplification).
+  At 2.6k land-price points: GeoJSON is ideal. At ~10k building polygons: GeoJSON still
+  works but you can measure the parse cost on first load (open DevTools → Network tab).
+  At 50k+ (full 23 wards): switch the source to `vector` type (PMTiles served from
+  Phoenix or a CDN), pre-tile with `tippecanoe`, and drop the `geojson` source entirely.
+  MapLibre handles the tile request/caching automatically; the `setFilter` API still works.
+
+  Toggle visibility instead of re-adding layers: cheaper (keeps the source in GL memory),
+  and avoids a flash of empty source on re-add.
+
+  **Log-spaced** colour stops for land price, not linear: prices span ¥1.5k–¥54M/m²,
+  so a linear ramp would flatten 90% of points into one colour.
+
+- **If asked to extend it:** run `tippecanoe -o buildings.pmtiles buildings_tokyo.geojson`
+  on the full 23-ward dataset, serve the `.pmtiles` file via `plug Plug.Static`, change the
+  MapLibre source type to `vector` with a `pmtiles://` URL, and the layer `source-layer`
+  to the layer name tippecanoe assigned. Nothing else on the frontend changes.
+  For the 3D variant: swap `fill` for `fill-extrusion` and drive `fill-extrusion-height`
+  from the `levels` property.
+
+- **Trap I hit / avoided:** Polygon layer order matters visually — buildings fill MUST be
+  added before circles or it paints over the data. MapLibre layers render in insertion order
+  (later = on top). Also: the `fill-outline-color` paint property draws polygon edges without
+  needing a separate `line` layer. GeoJSON Polygon rings must be closed (last coord === first);
+  the Overpass output uses `{lat, lon}` objects, not `[lon, lat]` arrays — swap on ingest or
+  every building appears in the South Atlantic.
+
+  **Scale discovery:** the first ingest run against the broader central-Tokyo bbox returned
+  206,971 building features — estimated ~150 MB of GeoJSON. This proved the "GeoJSON ceiling"
+  concretely: even `setData` on a pre-cached 150 MB payload would freeze the browser's main
+  thread. Two fixes applied: (1) narrow the committed dataset to Shinjuku ward (~5–10k
+  features, ~10 MB), and (2) switch the frontend from "load once" to the same per-viewport
+  bbox-fetch pattern as land price (`watch(viewportBbox)` + `AbortController` + cache). For
+  the full 23-ward dataset, the correct path is `tippecanoe → PMTiles → MapLibre vector source`
+  — the backend serves tiles, MapLibre requests only the tiles it needs, and simplification
+  at low zoom is automatic.
 
 ## 4. State management for filter-heavy UIs
 - **What I built:** A single Pinia store `useQueryStore` (`app/stores/query.ts`) holding shared

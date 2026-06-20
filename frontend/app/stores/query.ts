@@ -23,6 +23,9 @@ export const useQueryStore = defineStore('query', () => {
   // Active layers — the map toggles MapLibre visibility from these.
   const showWeather = ref(true)
   const showLandPrice = ref(true)
+  // Buildings off by default: ~10k polygon features on load is a real parse cost;
+  // let the user opt in so the initial map load stays fast (problem #3 lesson).
+  const showBuildings = ref(false)
 
   // Land-price filter (yen/m²). Drives the map (setFilter) and the list (computed).
   const priceMin = ref(PRICE_MIN)
@@ -55,7 +58,7 @@ export const useQueryStore = defineStore('query', () => {
   }
 
   return {
-    showWeather, showLandPrice, priceMin, priceMax,
+    showWeather, showLandPrice, showBuildings, priceMin, priceMax,
     viewportFeatures, viewportBbox,
     weatherFault, weatherStatus, weatherRetryTick, retryWeather,
   }

@@ -50,5 +50,6 @@ logs/
 # ===== Misc =====
 *.swp
 *.swo
+*.bak
 .netrc
 .claude

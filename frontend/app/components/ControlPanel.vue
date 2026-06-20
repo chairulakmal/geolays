@@ -11,7 +11,7 @@ const store = useQueryStore()
 // storeToRefs keeps reactivity when pulling state out of the store. Plain
 // destructuring (`const { priceMin } = store`) would copy the value and break
 // two-way binding. See CLAUDE.md trap #1.
-const { showWeather, showLandPrice, priceMin, priceMax, weatherFault, weatherStatus } = storeToRefs(store)
+const { showWeather, showLandPrice, showBuildings, priceMin, priceMax, weatherFault, weatherStatus } = storeToRefs(store)
 
 // Land price is log-distributed (¥1.5k–¥53.8M), so the sliders operate in log
 // space — a linear slider would cram ~90% of points into the bottom few percent.
@@ -41,6 +41,10 @@ const fmt = (v: number) =>
       <!-- Weather row: toggle + per-source status dot + retry (problem #7). -->
       <div class="layer-row">
         <label><input v-model="showWeather" type="checkbox"> Weather (summer avg)</label>
+        <span class="info-wrap">
+          <span class="info-icon">i</span>
+          <span class="info-tip">Summer avg °C (2022–2024) from Open-Meteo, interpolated to a ~3 km grid. Blurred circles form a continuous temperature field.</span>
+        </span>
         <span class="status-dot" :class="weatherStatus" :title="weatherStatus" />
       </div>
       <button
@@ -50,7 +54,22 @@ const fmt = (v: number) =>
       >
         Retry weather
       </button>
-      <label><input v-model="showLandPrice" type="checkbox"> Land price</label>
+      <div class="layer-row">
+        <label><input v-model="showLandPrice" type="checkbox"> Land price</label>
+        <span class="info-wrap">
+          <span class="info-icon">i</span>
+          <span class="info-tip">MLIT official land prices (2024), ¥/m². ~2,200 points across Tokyo. Colour + radius both encode price on a log scale.</span>
+        </span>
+      </div>
+      <!-- Buildings off by default: toggling on triggers a ~10k-feature GeoJSON load —
+           that's the point, so the user can feel the parse cost vs. the point layers. -->
+      <div class="layer-row">
+        <label><input v-model="showBuildings" type="checkbox"> Buildings (OSM)</label>
+        <span class="info-wrap">
+          <span class="info-icon">i</span>
+          <span class="info-tip">OSM building footprints for central Tokyo (~10k polygons). Loaded on demand per viewport — toggling on may take a moment.</span>
+        </span>
+      </div>
     </fieldset>
 
     <!-- Fault injection: adds ?fault=<mode> to the weather fetch so the backend
@@ -131,6 +150,60 @@ label {
 
 .layer-row label {
   flex: 1;
+}
+
+/* Info icon + tooltip bubble. Pure CSS — no JS, no extra library. */
+.info-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid #9ca3af;
+  color: #6b7280;
+  font: 600 9px/1 system-ui, sans-serif;
+  cursor: default;
+  user-select: none;
+}
+
+.info-tip {
+  display: none;
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 180px;
+  padding: 6px 8px;
+  background: #1f2937;
+  color: #f9fafb;
+  font: 11px/1.4 system-ui, sans-serif;
+  border-radius: 6px;
+  z-index: 100;
+  pointer-events: none;
+  white-space: normal;
+}
+
+/* Arrow pointing left back to the icon. */
+.info-tip::before {
+  content: '';
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-right-color: #1f2937;
+}
+
+.info-wrap:hover .info-tip {
+  display: block;
 }
 
 /* Per-source status indicator (problem #7). A coloured dot next to each layer

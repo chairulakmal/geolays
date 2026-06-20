@@ -17,7 +17,7 @@ const container = useTemplateRef<HTMLDivElement>('container')
 // reads it (no prop drilling — problem #4). storeToRefs keeps reactivity when
 // destructuring store state (CLAUDE.md trap #1).
 const store = useQueryStore()
-const { showWeather, showLandPrice, priceMin, priceMax, viewportBbox, weatherFault, weatherRetryTick } = storeToRefs(store)
+const { showWeather, showLandPrice, showBuildings, priceMin, priceMax, viewportBbox, weatherFault, weatherRetryTick } = storeToRefs(store)
 
 // Initial viewport: framed to show all of mainland Tokyo (23 wards + Tama west),
 // matching the data extent. Hardcoded by decision — no region picker.
@@ -29,6 +29,7 @@ const INITIAL_ZOOM = 10
 // points into a continuous temperature field (no discrete dots).
 const WEATHER_LAYERS = ['weather-cloud']
 const LAND_PRICE_LAYERS = ['land-price-points']
+const BUILDING_LAYERS = ['buildings-fill']
 
 // Temperature colour ramp (cold blue → hot red). Just the colours — the °C values
 // are NOT fixed, because across Tokyo temperature varies only ~1–2°C, so a fixed
@@ -118,6 +119,13 @@ onMounted(async () => {
   // weather first, then land-price, so the dense price layer draws ON TOP of the
   // sparse weather layer — layer order is a real multi-overlay concern (#3).
   map.on('load', async () => {
+    // Buildings go first so they render BELOW the data layers (MapLibre draws layers
+    // in insertion order). Weather and land-price circles appear on top.
+    setupBuildingsLayer()
+    // Fire-and-forget: don't await so the weather layer sets up in parallel.
+    // Buildings data is independent — a slow buildings fetch won't block weather.
+    loadBuildingsData()
+
     // Weather: set up source + layer first, then load data separately so the
     // load can be re-run for retry and fault injection (problem #7).
     setupWeatherLayer()
@@ -161,6 +169,38 @@ async function fetchLayer(path: string): Promise<GeoJSON.FeatureCollection | nul
     return null
   }
 }
+
+// Adds the buildings source (empty) and fill layer. Inserted BEFORE weather + land-price
+// so it renders underneath — polygon fills would otherwise cover the circle layers.
+// The `fill-outline-color` doubles as the building edge, so no separate `line` layer needed.
+function setupBuildingsLayer() {
+  if (!map) return
+  map.addSource('buildings', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+  map.addLayer({
+    id: 'buildings-fill',
+    type: 'fill',
+    source: 'buildings',
+    // Off by default: ~10k polygon features (see problem #3 — this is the "GeoJSON at
+    // scale" demo layer). User opts in so the initial map load stays fast.
+    layout: { visibility: showBuildings.value ? 'visible' : 'none' },
+    paint: {
+      // Muted warm grey: legible on the CARTO Positron basemap without fighting it.
+      // A future `fill-extrusion` layer with building height would give 3D effect.
+      'fill-color': '#c9c5bd',
+      'fill-opacity': 0.65,
+      'fill-outline-color': '#a09c93',
+    },
+  })
+}
+
+// Per-viewport buildings cache — same key strategy as the land-price cache.
+const buildingsCache = new Map<string, GeoJSON.FeatureCollection>()
+
+// Buildings default to hidden, so there's nothing to prefetch on initial load.
+// The viewportBbox watcher handles the actual fetch whenever showBuildings is true.
+// This function exists so the map.on('load') block reads symmetrically alongside
+// loadWeatherData(); the real entry point is the showBuildings watch below.
+async function loadBuildingsData() {}
 
 // Adds the weather source (empty) and layer to the map. Data arrives via
 // loadWeatherData(), which can be re-run for retry and fault injection (problem #7).
@@ -361,6 +401,49 @@ watch(viewportBbox, (bbox, _prev, onCleanup) => {
   })
 })
 
+// Same debounce + abort + cache pattern as the land-price watch, applied to buildings.
+// Seeing the pattern twice for two different layers is the point: this is the standard
+// "expensive per-viewport fetch" solution regardless of what data is in the layer.
+// The reason buildings CAN'T use a single load-once fetch: 207k features across the
+// full central-Tokyo bbox = ~150 MB — proven when we first ran the ingest. Even the
+// narrower Shinjuku bbox (~5k features) is faster to bbox-filter than to load whole.
+watch(viewportBbox, (bbox, _prev, onCleanup) => {
+  if (!bbox || !showBuildings.value) return
+
+  let controller: AbortController | null = null
+
+  const timer = setTimeout(async () => {
+    const cacheKey = bboxCacheKey(bbox, map?.getZoom() ?? 10)
+    const cached = buildingsCache.get(cacheKey)
+    if (cached) {
+      const src = map?.getSource('buildings') as maplibregl.GeoJSONSource | undefined
+      src?.setData(cached)
+      return
+    }
+
+    controller = new AbortController()
+    const bboxParam = bbox.map((v) => v.toFixed(4)).join(',')
+    try {
+      const data = await $fetch<GeoJSON.FeatureCollection>(
+        `/api/layers/buildings?bbox=${bboxParam}`,
+        { baseURL: config.public.apiBase, signal: controller.signal }
+      )
+      buildingsCache.set(cacheKey, data)
+      const src = map?.getSource('buildings') as maplibregl.GeoJSONSource | undefined
+      src?.setData(data)
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        console.warn('[buildings] fetch failed:', err)
+      }
+    }
+  }, 300)
+
+  onCleanup(() => {
+    clearTimeout(timer)
+    controller?.abort()
+  })
+})
+
 // Land-price filter expression: keep points whose price is within [min, max].
 // MapLibre filters at render time, so this hides/shows points with no refetch.
 function priceFilter(min: number, max: number) {
@@ -377,6 +460,15 @@ function setLayersVisible(ids: string[], visible: boolean) {
     }
   }
 }
+watch(showBuildings, (v) => {
+  setLayersVisible(BUILDING_LAYERS, v)
+  // First toggle-on: the viewportBbox watch skipped while showBuildings was false,
+  // so no data has been fetched yet. Trigger a fetch by writing the current bbox.
+  if (v && map) {
+    const b = map.getBounds()
+    viewportBbox.value = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
+  }
+})
 watch(showWeather, (v) => setLayersVisible(WEATHER_LAYERS, v))
 watch(showLandPrice, (v) => {
   setLayersVisible(LAND_PRICE_LAYERS, v)

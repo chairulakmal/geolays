@@ -66,7 +66,30 @@ frequent calls (502s). We compute a stable climatology once and commit the resul
 **Output contract** (`properties`): `price_per_sqm`, `change_pct`, `use`, `zoning`, `ward`,
 `address`, `year`.
 
-## 3. Tokyo boundary (support data, not a layer)
+## 3. Building footprints — OSM via Overpass (polygon layer)
+
+| | |
+|---|---|
+| **Origin** | OpenStreetMap, via Overpass API — `https://overpass-api.de/api/interpreter`. Building way geometries for central Tokyo (Shinjuku, Shibuya, Minato, Chiyoda, Chuo, Bunkyo wards area). |
+| **License** | OpenStreetMap contributors, ODbL 1.0 |
+| **Raw format** | Overpass JSON with `out geom` — each `way` element contains inline `{lat, lon}` node coordinates. No secondary node-lookup pass needed. |
+| **Stored** | `backend/priv/data/buildings_tokyo.geojson` (committed after running ingest; ~10k `Polygon` features) |
+| **Served by** | `Backend.Buildings` → `GET /api/layers/buildings` |
+
+**Why OSM, not PLATEAU:** Both cover 2D building footprints (LOD0 equivalent). OSM is automatable — no manual download step, free with no key. For a production dataset, replace with PLATEAU GeoJSON from `https://www.geospatial.jp/ckan/dataset` (larger coverage, official source, same pipeline).
+
+**Pipeline** — `backend/priv/data/buildings.ingest.mjs` (re-run: `node buildings.ingest.mjs`):
+1. POST an Overpass query for `way["building"]` within the central-Tokyo bbox (`35.65,139.67,35.74,139.77`).
+2. Use `out geom qt` so each way includes inline coordinates — no second node-lookup pass.
+3. Convert each way to a GeoJSON `Polygon` Feature: map `{lat, lon}` → `[lon, lat]` (GeoJSON is lon-first), close the ring if needed.
+4. Normalize properties: keep `building`, `name`, `name_en`, `height` (metres), `levels` (floor count); drop raw OSM metadata.
+5. Write as a single `FeatureCollection`.
+
+**Output contract** (`properties`): `building` (string, e.g. `"yes"`, `"residential"`, `"commercial"`), `name` (nullable), `name_en` (nullable), `height` (metres, nullable), `levels` (integer, nullable).
+
+**Performance note:** At ~10k polygon features, GeoJSON works but you can measure the parse cost on first load. At 50k+ features (full 23 wards), the right move is `tippecanoe` → PMTiles and a `vector` source type in MapLibre instead of `geojson`. This layer is intentionally sized to sit at the GeoJSON-ceiling boundary — large enough to demonstrate the concern, small enough to keep the demo snappy.
+
+## 4. Tokyo boundary (support data, not a layer)
 
 | | |
 |---|---|
@@ -76,7 +99,7 @@ frequent calls (502s). We compute a stable climatology once and commit the resul
 | **Stored** | `backend/priv/data/tokyo_mainland.geojson` (committed) |
 | **Used by** | the weather ingest, to clip grid points (step 2 above). Not served to the frontend. |
 
-## 4. Basemap (frontend only, not stored)
+## 5. Basemap (frontend only, not stored)
 
 CARTO Positron raster tiles (`*.basemaps.cartocdn.com/light_all/...`); attribution
 "© OpenStreetMap contributors © CARTO". A muted base so the data overlays read clearly.

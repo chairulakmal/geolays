@@ -85,8 +85,7 @@ Concrete versions as scaffolded (the prose above covers the *why*; this is the q
 | Data store | _none_ | — | No DB — static GeoJSON from `priv/` (both layers precomputed + committed) |
 | Deploy | Railway | — | Railpack builder (never Nixpacks) |
 
-**Data sources:** Open-Meteo (weather, precomputed static climatology) + MLIT 国土数値情報 land price (bulk GeoJSON);
-e-Stat population mesh is a stretch. Detailed below.
+**Data sources:** Open-Meteo (weather, precomputed static climatology) + MLIT 国土数値情報 land price (bulk GeoJSON) + OSM building footprints (polygons via Overpass); e-Stat population mesh is a stretch. Detailed below.
 
 ## Open datasets to mirror RESTAR-style data layers
 
@@ -100,6 +99,7 @@ goal only if the first two are solid and time remains. Region is Tokyo throughou
 | Weather/temperature | Open-Meteo API (free, no key) | "other source" overlay | ✓ chosen |
 | Population/demographics | e-Stat census mesh data | demographics layer | stretch |
 | Land price | MLIT 国土数値情報 land price data | pricing layer | ✓ chosen |
+| Building footprints | OSM via Overpass API (polygon layer) | polygon rendering at scale | ✓ chosen |
 
 All of these are public/open and Tokyo-relevant, which doubles as domain familiarity for the interview itself.
 
@@ -146,6 +146,27 @@ the technical pipeline (exact formats, field mappings, transforms, endpoints) se
   one internal contract (problem #5), and a real price field to filter on (problem #4).
 - **Trap to note:** Japanese field names and encodings (Shift-JIS in some MLIT files). Part
   of the lesson is normalizing these into clean English property keys on the backend.
+
+#### OSM building footprints (polygon layer) — ✓ chosen
+
+- **What:** OpenStreetMap building footprint polygons for central Tokyo, fetched from the
+  Overpass API. Equivalent geometry to MLIT PLATEAU LOD0 (2D footprints). ~10k `Polygon`
+  features covering Shinjuku, Shibuya, Minato, Chiyoda, Chuo, and Bunkyo wards.
+- **Access:** Overpass API (`https://overpass-api.de/api/interpreter`), no key. See
+  `priv/data/buildings.ingest.mjs` for the query; `DATA.md §3` for the full pipeline.
+  For production, replace with PLATEAU GeoJSON from `https://www.geospatial.jp/ckan/dataset`
+  (larger coverage, official source, same pipeline structure).
+- **Shape:** GeoJSON `FeatureCollection` of `Polygon`s. Properties: `building` type,
+  `name`, `height` (metres), `levels` (floor count), all nullable except `building`.
+- **Why chosen:** The first polygon layer — both prior layers are points. Polygons unlock
+  `fill` + `fill-extrusion` layers and make the GeoJSON-ceiling question concrete: at
+  ~10k features you can feel the parse time vs. the point layers. At 50k+ features (full
+  23 wards), you'd switch to `tippecanoe` → PMTiles and a `vector` source type in
+  MapLibre. This layer is sized to sit at that boundary deliberately (problem #3).
+- **Trap to note:** Overpass coordinates are `{lat, lon}` objects; GeoJSON `Polygon`
+  rings want `[lon, lat]` arrays — longitude first, opposite of Overpass convention
+  (and of spoken "lat, lon"). Flip them in the ingest, or buildings appear in the ocean.
+  Also: GeoJSON rings must be closed (last coord equals first coord).
 
 #### e-Stat census population mesh (demographics) — stretch only
 
