@@ -1,0 +1,54 @@
+# Monorepo root ignore. Patterns are intentionally NOT anchored with a leading
+# "/" so they match inside both apps (backend/, frontend/). The scaffolders also
+# generated backend/.gitignore and frontend/.gitignore; this file covers the
+# cross-cutting bits and the subdir build artifacts.
+
+# ===== Nuxt / frontend build output =====
+.nuxt/
+.output/
+.nitro/
+.cache/
+.data/
+dist/
+
+# ===== Phoenix / Elixir backend build output =====
+deps/
+_build/
+cover/
+*.beam
+*.ez
+*.dump
+.elixir_ls/
+# Secret/runtime config (any depth, e.g. backend/config/*.secret.exs)
+config/*.secret.exs
+# Phoenix-digested static assets (generated). NOTE: do NOT ignore priv/ broadly —
+# we commit static datasets (e.g. land-price GeoJSON) under backend/priv/.
+priv/static/assets/
+priv/static/cache_manifest.json
+
+# ===== Node / npm =====
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ===== Env files =====
+.env
+.env.*
+!.env.example
+
+# ===== Editor / OS =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== Misc =====
+*.swp
+*.swo
+.netrc
+.claude
