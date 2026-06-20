@@ -8,4 +8,6 @@ canonical **[DATA.md](../../../DATA.md)** at the project root. Quick index:
 - `weather_summer_avg_tokyo.geojson` — avg summer temp grid (Open-Meteo archive), clipped to Tokyo.
 - `weather_summer_avg.ingest.mjs` — one-off ingest that generates the weather file.
 - `land_price_tokyo_L01-23_13.geojson` — MLIT 地価公示 L01 land price, 2023, Tokyo (raw).
+- `buildings_tokyo.geojson` — OSM building footprint polygons, Shinjuku-core bbox (≤8,000 features).
+- `buildings.ingest.mjs` — one-off ingest that fetches the buildings file from the Overpass API.
 - `tokyo_mainland.geojson` — Tokyo mainland boundary, used to clip the weather grid.

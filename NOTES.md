@@ -71,7 +71,7 @@ Template per problem:
   1. **Weather** (139 blurred circle points) — sparse, always fast; establishes the baseline.
   2. **Land price** (2,602 circle points) — added AFTER weather so the dense price layer draws
      on top; layer order is explicit (MapLibre renders in insertion order).
-  3. **Buildings** (~10k `Polygon` fill features, OSM Overpass) — added BEFORE the other two
+  3. **Buildings** (up to ~8k `Polygon` fill features, OSM Overpass, capped at `LIMIT=8000`) — added BEFORE the other two
      so polygon fills render below circle overlays. First polygon/fill layer in the project;
      toggles off by default so the initial map load stays fast.
 
@@ -81,7 +81,7 @@ Template per problem:
 
 - **The trade-off:** GeoJSON source (simple, fine at ≤10k features — MapLibre renders on
   the GPU) vs. vector tiles (worth it for 50k+ features / polygon simplification).
-  At 2.6k land-price points: GeoJSON is ideal. At ~10k building polygons: GeoJSON still
+  At 2.6k land-price points: GeoJSON is ideal. At up to ~8k building polygons: GeoJSON still
   works but you can measure the parse cost on first load (open DevTools → Network tab).
   At 50k+ (full 23 wards): switch the source to `vector` type (PMTiles served from
   Phoenix or a CDN), pre-tile with `tippecanoe`, and drop the `geojson` source entirely.
@@ -110,8 +110,8 @@ Template per problem:
   **Scale discovery:** the first ingest run against the broader central-Tokyo bbox returned
   206,971 building features — estimated ~150 MB of GeoJSON. This proved the "GeoJSON ceiling"
   concretely: even `setData` on a pre-cached 150 MB payload would freeze the browser's main
-  thread. Two fixes applied: (1) narrow the committed dataset to Shinjuku ward (~5–10k
-  features, ~10 MB), and (2) switch the frontend from "load once" to the same per-viewport
+  thread. Two fixes applied: (1) narrow the committed dataset to the Shinjuku-core bbox and
+  cap it at `LIMIT=8000` features, and (2) switch the frontend from "load once" to the same per-viewport
   bbox-fetch pattern as land price (`watch(viewportBbox)` + `AbortController` + cache). For
   the full 23-ward dataset, the correct path is `tippecanoe → PMTiles → MapLibre vector source`
   — the backend serves tiles, MapLibre requests only the tiles it needs, and simplification

@@ -13,10 +13,11 @@ defmodule Backend.Buildings do
   Weather). At ~10k polygon features the parse cost is real; caching it means every
   subsequent request is a memory lookup plus a fast Enum.filter.
 
-  The backend supports optional bbox filtering via `?bbox=west,south,east,north`,
-  but the frontend loads the full dataset once on map load — the MapLibre source
-  handles viewport culling on the GPU. The bbox param is here for consistency with
-  the land-price endpoint and for the "if you needed it" interview story.
+  The backend supports optional bbox filtering via `?bbox=west,south,east,north`.
+  The frontend uses it: buildings are fetched **per-viewport** (debounced + cached +
+  `AbortController`), the same pattern as the land-price layer — not loaded whole on
+  startup. Loading the un-capped dataset at once is ~150 MB; per-viewport keeps the
+  initial payload under ~1 MB. See `MapView.client.vue` `watch(viewportBbox, …)`.
   """
 
   @path "data/buildings_tokyo.geojson"

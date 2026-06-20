@@ -82,7 +82,7 @@ Concrete versions as scaffolded (the prose above covers the *why*; this is the q
 | Framework (backend) | Phoenix | 1.8 | JSON API only (`--no-ecto --no-html --no-assets`) |
 | HTTP server | Bandit | 1.x | Phoenix's web server |
 | CORS | `cors_plug` | 3.x | Allows the browser frontend to call the API cross-origin |
-| Data store | _none_ | — | No DB — static GeoJSON from `priv/` (both layers precomputed + committed) |
+| Data store | _none_ | — | No DB — static GeoJSON from `priv/` (all three layers precomputed/ingested + committed) |
 | Deploy | Railway | — | Railpack builder (never Nixpacks) |
 
 **Data sources:** Open-Meteo (weather, precomputed static climatology) + MLIT 国土数値情報 land price (bulk GeoJSON) + OSM building footprints (polygons via Overpass); e-Stat population mesh is a stretch. Detailed below.
@@ -149,20 +149,24 @@ the technical pipeline (exact formats, field mappings, transforms, endpoints) se
 
 #### OSM building footprints (polygon layer) — ✓ chosen
 
-- **What:** OpenStreetMap building footprint polygons for central Tokyo, fetched from the
-  Overpass API. Equivalent geometry to MLIT PLATEAU LOD0 (2D footprints). ~10k `Polygon`
-  features covering Shinjuku, Shibuya, Minato, Chiyoda, Chuo, and Bunkyo wards.
-- **Access:** Overpass API (`https://overpass-api.de/api/interpreter`), no key. See
+- **What:** OpenStreetMap building footprint polygons for the **Shinjuku ward (新宿区) core**,
+  fetched from the Overpass API. Equivalent geometry to MLIT PLATEAU LOD0 (2D footprints).
+  Up to **~8k** `Polygon` features (capped at 8,000 in the ingest) over the bbox
+  `35.677,139.685,35.715,139.745` — a small, dense central-Tokyo box, deliberately scoped.
+- **Access:** Overpass API, no key (the ingest tries three public mirrors and uses the first
+  that responds — the main `overpass-api.de` host 406s in some networks). See
   `priv/data/buildings.ingest.mjs` for the query; `DATA.md §3` for the full pipeline.
   For production, replace with PLATEAU GeoJSON from `https://www.geospatial.jp/ckan/dataset`
   (larger coverage, official source, same pipeline structure).
 - **Shape:** GeoJSON `FeatureCollection` of `Polygon`s. Properties: `building` type,
-  `name`, `height` (metres), `levels` (floor count), all nullable except `building`.
+  `name`, `name_en`, `height` (metres), `levels` (floor count), all nullable except `building`.
 - **Why chosen:** The first polygon layer — both prior layers are points. Polygons unlock
   `fill` + `fill-extrusion` layers and make the GeoJSON-ceiling question concrete: at
-  ~10k features you can feel the parse time vs. the point layers. At 50k+ features (full
+  ~8k features you can feel the parse time vs. the point layers. At 50k+ features (full
   23 wards), you'd switch to `tippecanoe` → PMTiles and a `vector` source type in
-  MapLibre. This layer is sized to sit at that boundary deliberately (problem #3).
+  MapLibre. This layer is sized to sit at that boundary deliberately (problem #3) — the
+  first ingest against a wider bbox returned 207k features (~150 MB), which is exactly the
+  ceiling this layer exists to demonstrate.
 - **Trap to note:** Overpass coordinates are `{lat, lon}` objects; GeoJSON `Polygon`
   rings want `[lon, lat]` arrays — longitude first, opposite of Overpass convention
   (and of spoken "lat, lon"). Flip them in the ingest, or buildings appear in the ocean.

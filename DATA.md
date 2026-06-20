@@ -70,24 +70,28 @@ frequent calls (502s). We compute a stable climatology once and commit the resul
 
 | | |
 |---|---|
-| **Origin** | OpenStreetMap, via Overpass API — `https://overpass-api.de/api/interpreter`. Building way geometries for central Tokyo (Shinjuku, Shibuya, Minato, Chiyoda, Chuo, Bunkyo wards area). |
+| **Origin** | OpenStreetMap, via the Overpass API. Building `way` geometries for the **Shinjuku ward (新宿区) core** — bbox `35.677,139.685,35.715,139.745` (S,W,N,E). A small, dense central-Tokyo box, deliberately scoped (see "Why this bbox" below). |
 | **License** | OpenStreetMap contributors, ODbL 1.0 |
 | **Raw format** | Overpass JSON with `out geom` — each `way` element contains inline `{lat, lon}` node coordinates. No secondary node-lookup pass needed. |
-| **Stored** | `backend/priv/data/buildings_tokyo.geojson` (committed after running ingest; ~10k `Polygon` features) |
-| **Served by** | `Backend.Buildings` → `GET /api/layers/buildings` |
+| **Stored** | `backend/priv/data/buildings_tokyo.geojson` (committed after running ingest; up to **8,000** `Polygon` features — capped by `LIMIT` in the ingest) |
+| **Served by** | `Backend.Buildings` → `GET /api/layers/buildings` (optional `?bbox=west,south,east,north`, filtered by polygon centroid) |
 
 **Why OSM, not PLATEAU:** Both cover 2D building footprints (LOD0 equivalent). OSM is automatable — no manual download step, free with no key. For a production dataset, replace with PLATEAU GeoJSON from `https://www.geospatial.jp/ckan/dataset` (larger coverage, official source, same pipeline).
 
 **Pipeline** — `backend/priv/data/buildings.ingest.mjs` (re-run: `node buildings.ingest.mjs`):
-1. POST an Overpass query for `way["building"]` within the central-Tokyo bbox (`35.65,139.67,35.74,139.77`).
-2. Use `out geom qt` so each way includes inline coordinates — no second node-lookup pass.
-3. Convert each way to a GeoJSON `Polygon` Feature: map `{lat, lon}` → `[lon, lat]` (GeoJSON is lon-first), close the ring if needed.
-4. Normalize properties: keep `building`, `name`, `name_en`, `height` (metres), `levels` (floor count); drop raw OSM metadata.
+1. POST an Overpass query for `way["building"]` within the Shinjuku-core bbox `35.677,139.685,35.715,139.745` (Overpass bbox order is `south,west,north,east` — lat before lon, the opposite of GeoJSON).
+2. The query is `way["building"](<bbox>); out 8000 geom;` — `out geom` attaches each node's `{lat, lon}` inline, so there's no second node-lookup pass; `8000` is the `LIMIT` cap (see "Why the cap" below).
+3. Convert each way to a GeoJSON `Polygon` Feature: map `{lat, lon}` → `[lon, lat]` (GeoJSON is lon-first), and close the ring if the last coord ≠ the first.
+4. Normalize properties: keep `building`, `name`, `name_en`, `height` (metres), `levels` (floor count); drop raw OSM metadata. Note the ingest also writes `osm_id`/`id`, which `Backend.Buildings` then drops on serve.
 5. Write as a single `FeatureCollection`.
+
+**Endpoint fallback:** the ingest tries three Overpass mirrors in order (`overpass.kumi.systems`, `lz4.overpass-api.de`, `overpass-api.de`) and uses the first that succeeds — the main `overpass-api.de` host returns 406 in some network environments.
+
+**Why this bbox + Why the cap:** the first run used a broader central-Tokyo bbox and returned **206,971** features (~150 MB of GeoJSON) — concrete proof of the GeoJSON ceiling: even a pre-cached payload that large freezes the browser's main thread on `setData`. Two responses: (1) narrow the committed dataset to the Shinjuku-core bbox and cap it at `LIMIT = 8000` features, and (2) have the frontend fetch buildings per-viewport (debounced + cached, same pattern as land price) rather than loading the whole file at once. For the full 23 wards the correct path is `tippecanoe → PMTiles → MapLibre vector source` (set `LIMIT = Infinity`, tile the output). See `NOTES.md §3`.
 
 **Output contract** (`properties`): `building` (string, e.g. `"yes"`, `"residential"`, `"commercial"`), `name` (nullable), `name_en` (nullable), `height` (metres, nullable), `levels` (integer, nullable).
 
-**Performance note:** At ~10k polygon features, GeoJSON works but you can measure the parse cost on first load. At 50k+ features (full 23 wards), the right move is `tippecanoe` → PMTiles and a `vector` source type in MapLibre instead of `geojson`. This layer is intentionally sized to sit at the GeoJSON-ceiling boundary — large enough to demonstrate the concern, small enough to keep the demo snappy.
+**Performance note:** At up to ~8k polygon features, GeoJSON works but you can measure the parse cost on first load. At 50k+ features (full 23 wards), the right move is `tippecanoe` → PMTiles and a `vector` source type in MapLibre instead of `geojson`. This layer is intentionally sized to sit at the GeoJSON-ceiling boundary — large enough to demonstrate the concern, small enough to keep the demo snappy.
 
 ## 4. Tokyo boundary (support data, not a layer)
 
@@ -106,8 +110,77 @@ CARTO Positron raster tiles (`*.basemaps.cartocdn.com/light_all/...`); attributi
 
 ---
 
-## Frontend
+## Frontend — how MapLibre consumes each layer
 
 The frontend applies **no data transformations** — it fetches each layer's normalized
-`FeatureCollection` and hands it straight to MapLibre. All map appearance (colour ramps,
-the temperature "cloud", log-scaled price colours) is *styling*, not data changes.
+`FeatureCollection` (already in our one contract) and hands it straight to MapLibre. All
+map appearance (colour ramps, the temperature "cloud", log-scaled price colours) is
+*styling*, not data changes. The end-to-end shape of each layer is therefore:
+
+> raw upstream → backend normalization (above) → `GET /api/layers/*` → MapLibre `source` →
+> MapLibre `layer` + paint expression → pixels.
+
+Every layer uses a `geojson` **source type** (not `vector`) — see the GeoJSON-vs-vector-tiles
+trade-off at the end. The presentation lives in `frontend/app/components/MapView.client.vue`;
+the Vue/Nuxt patterns behind it (reactivity, lifecycle, debounce) are catalogued in
+`CLAUDE.md` and the interview specifics in `NOTES.md` — **linked, not restated** here.
+
+### Weather → `circle` layer rendered as a blurred "cloud"
+
+- **Layer type:** `circle` (id `weather-cloud`), *not* `heatmap`. We want one translucent
+  blob per grid point, sized in screen pixels, that blends with its neighbours.
+- **Paint:** large `circle-radius` interpolated by zoom (`30px` at z9 → `480px` at z13),
+  `circle-blur: 1`, `circle-opacity: 0.4`. The blur + overlap is what turns 139 discrete
+  points into a continuous temperature field — hence the grid in `§1` is spaced *equally in
+  screen pixels* so the blobs overlap evenly.
+- **Colour encoding:** `circle-color` is data-driven on `temperature`, but the colour stops
+  are **stretched to the actual min/max of the fetched data**, not a fixed 0–32 °C scale.
+  Intra-Tokyo summer variation is only ~1–2 °C; a fixed scale would paint every point the
+  same colour. The same domain drives the on-map legend, so legend and map can't drift.
+- **Fetch model:** loaded **once** on map load (139 points is trivial), then re-fetchable for
+  retry / fault injection (problem #7). This is the only layer with a fault-injection path.
+
+### Land price → `circle` layer, price encoded by radius *and* colour
+
+- **Layer type:** `circle` (id `land-price-points`).
+- **Paint:** both `circle-radius` and `circle-color` are data-driven on `price_per_sqm`, so
+  expensive parcels read as large dark-red dots and cheap ones as small green dots — price is
+  legible even where points overlap.
+- **Why log-spaced colour stops:** Tokyo land price spans ~¥1.5k–¥54M/m². A *linear* ramp
+  would collapse ~90% of points into the cheapest colour, so the stops are spaced
+  geometrically (`¥100k, ¥300k, ¥500k, ¥1M, ¥2M, ¥5M, ¥20M`). The price-range *slider* in
+  `ControlPanel.vue` is log-scaled for the same reason.
+- **Interactivity:** the price filter is applied with MapLibre `setFilter` (a render-time
+  expression), so filtering hides/shows points with **no refetch and no data round-trip**.
+  The synced side-panel list (`FeatureList.vue`, problem #1) is populated from
+  `queryRenderedFeatures`, which already respects the active `setFilter`.
+- **Fetch model:** fetched **per viewport** — `GET /api/layers/land-price?bbox=…`, debounced
+  300 ms, cancelled with `AbortController`, and cached client-side by `bbox+zoom` (problem #6).
+
+### Buildings → `fill` layer (the first polygon layer)
+
+- **Layer type:** `fill` (id `buildings-fill`), inserted **before** the two circle layers so
+  the polygon fills render *underneath* the point overlays (MapLibre draws layers in
+  insertion order).
+- **Paint:** flat muted grey (`fill-color: #c9c5bd`, `fill-opacity: 0.65`) with
+  `fill-outline-color` for the building edges — the outline paint property avoids needing a
+  separate `line` layer. Building data is *not* yet visually encoded; height/levels are
+  carried in properties so a future `fill-extrusion` layer can drive `fill-extrusion-height`.
+- **Default off:** the toggle starts hidden so the initial map load stays fast; the user opts
+  in to feel the polygon parse cost vs. the point layers (problem #3).
+- **Fetch model:** fetched **per viewport** with the same debounce + abort + cache pattern as
+  land price, *not* loaded whole — see "Why this bbox + Why the cap" in `§3`.
+
+### Basemap
+
+CARTO Positron raster tiles as a single `raster` source/layer (see `§5`) — a muted base so
+the data overlays read clearly.
+
+### Trade-off threaded through all three: GeoJSON source vs. vector tiles
+
+All layers use a `geojson` source because at these sizes (139 / 2,602 / ≤8,000 features)
+MapLibre parses and GPU-renders them comfortably, and `setData` / `setFilter` stay simple.
+The buildings layer is deliberately sized at the boundary where this stops scaling: at 50k+
+features the right move is `tippecanoe → PMTiles` and a `vector` source type, so MapLibre
+requests only the tiles in view and simplifies geometry at low zoom. Nothing on the frontend
+changes but the source type and the `pmtiles://` URL. See `§3` and `NOTES.md §3`.

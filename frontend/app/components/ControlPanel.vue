@@ -58,7 +58,7 @@ const fmt = (v: number) =>
         <label><input v-model="showLandPrice" type="checkbox"> Land price</label>
         <span class="info-wrap">
           <span class="info-icon">i</span>
-          <span class="info-tip">MLIT official land prices (2024), ¥/m². ~2,200 points across Tokyo. Colour + radius both encode price on a log scale.</span>
+          <span class="info-tip">MLIT official land prices (2023), ¥/m². ~2,600 points across Tokyo. Colour + radius both encode price on a log scale.</span>
         </span>
       </div>
       <!-- Buildings off by default: toggling on triggers a ~10k-feature GeoJSON load —
@@ -67,7 +67,7 @@ const fmt = (v: number) =>
         <label><input v-model="showBuildings" type="checkbox"> Buildings (OSM)</label>
         <span class="info-wrap">
           <span class="info-icon">i</span>
-          <span class="info-tip">OSM building footprints for central Tokyo (~10k polygons). Loaded on demand per viewport — toggling on may take a moment.</span>
+          <span class="info-tip">OSM building footprints for Shinjuku ward (up to ~8k polygons, capped). Fetched per viewport on demand — toggling on may take a moment.</span>
         </span>
       </div>
     </fieldset>
