@@ -10,6 +10,8 @@ defmodule BackendWeb.Router do
 
     get "/health", HealthController, :index
     get "/layers/weather", WeatherController, :index
+    get "/layers/weather/raster", WeatherController, :raster
+    get "/layers/weather/meta", WeatherController, :meta
     get "/layers/land-price", LandPriceController, :index
     get "/layers/buildings", BuildingsController, :index
   end

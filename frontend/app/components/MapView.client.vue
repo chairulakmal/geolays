@@ -25,17 +25,27 @@ const { showWeather, showLandPrice, showBuildings, priceMin, priceMax, viewportB
 const TOKYO_CENTER: [number, number] = [139.6, 35.7]
 const INITIAL_ZOOM = 10
 
-// Weather renders as a single blurred "cloud" layer that blends neighbouring grid
-// points into a continuous temperature field (no discrete dots).
-const WEATHER_LAYERS = ['weather-cloud']
+// Weather is a pre-rendered IDW raster PNG served as a MapLibre `image` source.
+// Produces a continuous temperature field at any zoom — no discrete-dot artefacts.
+const WEATHER_LAYERS = ['weather-raster']
 const LAND_PRICE_LAYERS = ['land-price-points']
 const BUILDING_LAYERS = ['buildings-fill']
 
-// Temperature colour ramp (cold blue → hot red). Just the colours — the °C values
-// are NOT fixed, because across Tokyo temperature varies only ~1–2°C, so a fixed
-// 0–32° scale paints every point the same. Instead we stretch this ramp across the
-// actual min/max of the fetched data (computed below), so the gradient is visible.
-const WEATHER_RAMP = ['#2c7bb6', '#abd9e9', '#ffffbf', '#fdae61', '#d7191c']
+// Geographic corners of the IDW PNG — must match the ingest bbox constants.
+// MapLibre maps each corner pixel to these [lon, lat] coordinates.
+const WEATHER_IMAGE_COORDS: [[number, number], [number, number], [number, number], [number, number]] = [
+  [138.94, 35.90], // top-left
+  [139.92, 35.90], // top-right
+  [139.92, 35.50], // bottom-right
+  [138.94, 35.50], // bottom-left
+]
+
+// 1×1 transparent PNG: placeholder for the image source before the real raster loads.
+// MapLibre requires a valid image URL at source creation time.
+const TRANSPARENT_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+
+// Metadata from /api/layers/weather/meta — drives the legend without loading the full GeoJSON.
+interface WeatherMeta { tMin: number; tMax: number; ramp: string[] }
 
 // Actual temperature range of the current data; drives both the map ramp and the
 // legend, so they can't drift. Set after the weather layer loads.
@@ -48,8 +58,12 @@ function rampStops(ramp: string[], [min, max]: [number, number]): Array<[number,
 
 // Legend entries for the weather ramp, derived from the live domain.
 const weatherLegend = computed(() =>
-  tempDomain.value ? rampStops(WEATHER_RAMP, tempDomain.value) : []
+  tempDomain.value ? rampStops(['#2c7bb6', '#abd9e9', '#ffffbf', '#fdae61', '#d7191c'], tempDomain.value) : []
 )
+
+// Track the active object URL so we can revoke it before creating the next one,
+// avoiding a memory leak on each retry / fault-mode change.
+let weatherObjectUrl: string | null = null
 
 // Price → colour ramp (yen/m²). Tokyo land price spans ~¥1.5k–¥54M/m², so stops
 // are log-spaced, not linear, or everything below ~¥1M would look identical.
@@ -202,28 +216,24 @@ const buildingsCache = new Map<string, GeoJSON.FeatureCollection>()
 // loadWeatherData(); the real entry point is the showBuildings watch below.
 async function loadBuildingsData() {}
 
-// Adds the weather source (empty) and layer to the map. Data arrives via
-// loadWeatherData(), which can be re-run for retry and fault injection (problem #7).
-// Separating structure from data means the layer exists immediately and the map
-// never shows a broken layer reference.
+// Adds the weather image source and raster layer. Source starts with a 1×1
+// transparent placeholder; loadWeatherData() replaces it with the real IDW PNG.
+// Separating structure from data means the layer reference is always valid.
 function setupWeatherLayer() {
   if (!map) return
-  map.addSource('weather', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+  map.addSource('weather', {
+    type: 'image',
+    url: TRANSPARENT_PNG,
+    coordinates: WEATHER_IMAGE_COORDS
+  })
   map.addLayer({
-    id: 'weather-cloud',
-    type: 'circle',
+    id: 'weather-raster',
+    type: 'raster',
     source: 'weather',
     layout: { visibility: showWeather.value ? 'visible' : 'none' },
     paint: {
-      'circle-radius': ['interpolate', ['exponential', 2], ['zoom'], 9, 30, 13, 480],
-      // The cloud: large blurred circles forming a continuous temperature field.
-      // See the original addWeatherLayer comment for the radius/blur rationale.
-      'circle-blur': 1,
-      'circle-opacity': 0.4,
-      // Placeholder colour until loadWeatherData sets the data-driven ramp via
-      // setPaintProperty. '#b0c4de' is a neutral cool blue — visually distinct
-      // from the basemap so an error state is obvious (empty layer = no cloud).
-      'circle-color': '#b0c4de'
+      'raster-opacity': 0.375,
+      'raster-fade-duration': 400,  // smooth cross-fade on retry/fault toggle
     }
   })
 }
@@ -235,61 +245,51 @@ function setupWeatherLayer() {
 // level controller because loadWeatherData is called imperatively, not from a watch.
 let weatherController: AbortController | null = null
 
-// Fetches weather data and pushes it into the existing source via setData.
+// Fetches weather metadata (for the legend) then the IDW raster PNG (for the map).
+// Two separate requests: meta never has fault injection (legend should always show);
+// the PNG raster does (fault toggle controls which endpoint gets the fault param).
 // Can be called multiple times: initial load, fault-mode change, and retry.
-// Updates store.weatherStatus so ControlPanel can show per-source feedback.
 async function loadWeatherData() {
   if (!map) return
 
-  // Cancel any previous in-flight request before starting a new one (problem #7).
   weatherController?.abort()
   weatherController = new AbortController()
   store.weatherStatus = 'loading'
 
   const faultParam = weatherFault.value !== 'none' ? `?fault=${weatherFault.value}` : ''
-  let data: GeoJSON.FeatureCollection | null = null
+  const base = config.public.apiBase
+
   try {
-    data = await $fetch<GeoJSON.FeatureCollection>(
-      `/api/layers/weather${faultParam}`,
-      { baseURL: config.public.apiBase, signal: weatherController.signal }
-    )
+    // Step 1: metadata (tMin/tMax/ramp) — drives the legend; no fault injection.
+    const meta = await $fetch<WeatherMeta>('/api/layers/weather/meta', { baseURL: base })
+
+    // Step 2: IDW raster PNG — fault-injected. Fetch as a blob so we control
+    // error handling (image sources don't surface load errors via MapLibre events).
+    const res = await fetch(`${base}/api/layers/weather/raster${faultParam}`, {
+      signal: weatherController.signal
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+
+    // Revoke previous object URL before creating a new one (memory management).
+    if (weatherObjectUrl) URL.revokeObjectURL(weatherObjectUrl)
+    weatherObjectUrl = URL.createObjectURL(blob)
+
+    const src = map?.getSource('weather') as maplibregl.ImageSource | undefined
+    src?.updateImage({ url: weatherObjectUrl })
+
+    tempDomain.value = [meta.tMin, meta.tMax]
+    store.weatherStatus = 'ok'
   } catch (err: unknown) {
-    // AbortError means a newer loadWeatherData() call superseded this one — bail
-    // silently, the newer call manages status from here.
     if (err instanceof Error && err.name === 'AbortError') return
     console.warn('[weather] fetch failed:', err)
-  }
-
-  if (!data) {
     store.weatherStatus = 'error'
-    // Clear the source so the weather cloud disappears — an empty map is a clearer
-    // error signal than stale data silently hanging around (problem #7).
-    const src = map?.getSource('weather') as maplibregl.GeoJSONSource | undefined
-    src?.setData({ type: 'FeatureCollection', features: [] })
     tempDomain.value = null
-    return
+    // Reset to transparent placeholder — blank map is a clearer error signal
+    // than stale imagery hanging around (problem #7).
+    const src = map?.getSource('weather') as maplibregl.ImageSource | undefined
+    src?.updateImage({ url: TRANSPARENT_PNG })
   }
-
-  // Stretch the colour ramp across the actual temperature range so the small
-  // intra-Tokyo variation is visible (a fixed scale washes it out).
-  const temps = data.features
-    .map((f) => f.properties?.temperature as number)
-    .filter((t) => Number.isFinite(t))
-  if (!temps.length) { store.weatherStatus = 'error'; return }
-
-  const domain: [number, number] = [Math.min(...temps), Math.max(...temps)]
-  tempDomain.value = domain
-
-  const src = map?.getSource('weather') as maplibregl.GeoJSONSource | undefined
-  if (!src) return
-  src.setData(data)
-
-  // Update the colour ramp to the new domain. setPaintProperty replaces the paint
-  // expression in place — no need to recreate the layer.
-  const colorByTemp = ['interpolate', ['linear'], ['get', 'temperature'], ...rampStops(WEATHER_RAMP, domain).flat()]
-  map.setPaintProperty('weather-cloud', 'circle-color', colorByTemp)
-
-  store.weatherStatus = 'ok'
 }
 
 // Re-run loadWeatherData whenever the fault mode changes OR the user clicks retry.
@@ -493,6 +493,7 @@ onUnmounted(() => {
   // Symmetric teardown: dispose the GL context + listeners, or we leak across
   // HMR and route changes. See CLAUDE.md trap #5.
   weatherController?.abort()
+  if (weatherObjectUrl) URL.revokeObjectURL(weatherObjectUrl)
   map?.remove()
   map = null
 })

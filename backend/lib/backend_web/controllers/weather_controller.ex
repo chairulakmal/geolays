@@ -41,4 +41,45 @@ defmodule BackendWeb.WeatherController do
         |> json(%{error: "weather_source_unavailable"})
     end
   end
+
+  # IDW raster PNG — supports the same fault modes as the GeoJSON endpoint so
+  # problem #7 (graceful degradation) works with the raster layer too.
+  def raster(conn, %{"fault" => "error"}) do
+    conn
+    |> put_status(:bad_gateway)
+    |> json(%{error: "weather_raster_unavailable", fault: "injected"})
+  end
+
+  def raster(conn, %{"fault" => "delay"}) do
+    Process.sleep(3_000)
+    serve_raster(conn)
+  end
+
+  def raster(conn, _params), do: serve_raster(conn)
+
+  # Temperature domain + colour ramp — always fast, no fault injection.
+  # The frontend uses this to render the legend even before the PNG loads.
+  def meta(conn, _params) do
+    path = Application.app_dir(:backend, "priv/data/weather_tokyo_idw_meta.json")
+    case File.read(path) do
+      {:ok, data} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, data)
+      {:error, _} ->
+        conn |> put_status(:not_found) |> json(%{error: "weather_meta_not_found"})
+    end
+  end
+
+  defp serve_raster(conn) do
+    path = Application.app_dir(:backend, "priv/data/weather_tokyo_idw.png")
+    case File.read(path) do
+      {:ok, data} ->
+        conn
+        |> put_resp_content_type("image/png")
+        |> send_resp(200, data)
+      {:error, _} ->
+        conn |> put_status(:bad_gateway) |> json(%{error: "weather_raster_unavailable"})
+    end
+  end
 end
