@@ -204,7 +204,7 @@ Render hundreds–thousands of rows/parcels without jank.
 - Goal: demonstrate a clean Pinia or composable pattern for shared, cross-component query state — not prop drilling
 
 ### 5. Merging/normalizing multiple sources
-- Phoenix backend proxies 2+ open APIs (e.g. Open-Meteo + e-Stat) and returns a normalized shape
+- Phoenix backend serves/normalizes 2+ open sources (Open-Meteo weather + MLIT land price) into one shape
 - Goal: explain where normalization should live (backend vs. frontend) and why — a core geo-intelligence architecture question
 
 ### 6. Caching + debouncing expensive queries
