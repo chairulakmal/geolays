@@ -1,6 +1,6 @@
 # geolays
 
-A frontend-heavy B2B geo-data dashboard, built to learn the specific skills a real-estate geo-intelligence product (think RESTAR) actually needs from a frontend engineer. This is a **learning spike, not a portfolio piece** — scope is intentionally narrow and time-boxed. Backend is a thin Phoenix data server; almost all the interesting work happens in Vue.
+A frontend-heavy B2B geo-data dashboard, built to learn the specific skills a real-estate geo-intelligence product actually needs from a frontend engineer. This is a **learning spike, not a portfolio piece** — scope is intentionally narrow and time-boxed. Backend is a thin Phoenix data server; almost all the interesting work happens in Vue.
 
 ## Quickstart (dev)
 
@@ -29,7 +29,7 @@ CORS origins come from `CORS_ORIGINS` (default `http://localhost:3000`).
 
 ## Why this exists
 
-RESTAR's product combines geographic data with other sources for B2B real estate professionals. That implies a different skill set than a typical consumer app:
+A B2B real-estate geo-intelligence product combines geographic data with other sources for real estate professionals. That implies a different skill set than a typical consumer app:
 
 - Power users staring at dense data all day, not casual browsers
 - Maps as the primary UI, not a secondary feature
@@ -87,7 +87,7 @@ Concrete versions as scaffolded (the prose above covers the *why*; this is the q
 
 **Data sources:** Open-Meteo (weather, precomputed static climatology) + MLIT 国土数値情報 land price (bulk GeoJSON) + OSM building footprints (polygons via Overpass); e-Stat population mesh is a stretch. Detailed below.
 
-## Open datasets to mirror RESTAR-style data layers
+## Open datasets to mirror real-estate geo-intelligence data layers
 
 Pick 2–3 to keep scope sane. Don't try to integrate all of these. **Chosen for the
 spike (✓):** Open-Meteo weather + MLIT land price. e-Stat population mesh is a stretch
@@ -105,7 +105,7 @@ All of these are public/open and Tokyo-relevant, which doubles as domain familia
 
 ### Data sources in detail
 
-Understanding the *shape and quirks* of each source is half the point — RESTAR's real work
+Understanding the *shape and quirks* of each source is half the point — the real work
 is merging messy, heterogeneous data. This section is the narrative (*why* each source); for
 the technical pipeline (exact formats, field mappings, transforms, endpoints) see
 **[DATA.md](DATA.md)**.
@@ -205,7 +205,7 @@ Render hundreds–thousands of rows/parcels without jank.
 
 ### 5. Merging/normalizing multiple sources
 - Phoenix backend proxies 2+ open APIs (e.g. Open-Meteo + e-Stat) and returns a normalized shape
-- Goal: explain where normalization should live (backend vs. frontend) and why — likely a real RESTAR architecture question
+- Goal: explain where normalization should live (backend vs. frontend) and why — a core geo-intelligence architecture question
 
 ### 6. Caching + debouncing expensive queries
 - Debounce/throttle map pan & zoom before firing new data requests
