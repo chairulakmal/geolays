@@ -123,7 +123,7 @@ map appearance (colour ramps, the temperature "cloud", log-scaled price colours)
 Every layer uses a `geojson` **source type** (not `vector`) — see the GeoJSON-vs-vector-tiles
 trade-off at the end. The presentation lives in `frontend/app/components/MapView.client.vue`;
 the Vue/Nuxt patterns behind it (reactivity, lifecycle, debounce) are catalogued in
-`CLAUDE.md` and the interview specifics in `NOTES.md` — **linked, not restated** here.
+`CLAUDE.md` and the per-problem implementation notes in `NOTES.md` — **linked, not restated** here.
 
 ### Weather → `circle` layer rendered as a blurred "cloud"
 

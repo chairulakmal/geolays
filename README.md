@@ -36,13 +36,13 @@ A B2B real-estate geo-intelligence product combines geographic data with other s
 - Multiple data sources that need to be merged, normalized, and degrade gracefully
 - Heavy, frequent queries (pan/zoom/filter) that need to feel instant
 
-This project picks one thin vertical slice through each of those problems and builds just enough to be able to talk about it concretely in an interview.
+This project picks one thin vertical slice through each of those problems and builds just enough to demonstrate it concretely.
 
 ## Learning-first: how this repo is written
 
 This is a **learning project**, so the code and docs are deliberately over-explained. The
-goal is not just working software — it's being able to *explain* every non-obvious choice.
-Conventions:
+goal is not just working software — it's a clear written rationale for every non-obvious
+choice. Conventions:
 
 - **Explain the "why", not the "what".** Comments and docs justify decisions (why debounce
   at this interval, why normalize on the backend, why window the list) — they don't restate
@@ -101,7 +101,7 @@ goal only if the first two are solid and time remains. Region is Tokyo throughou
 | Land price | MLIT 国土数値情報 land price data | pricing layer | ✓ chosen |
 | Building footprints | OSM via Overpass API (polygon layer) | polygon rendering at scale | ✓ chosen |
 
-All of these are public/open and Tokyo-relevant, which doubles as domain familiarity for the interview itself.
+All of these are public/open and Tokyo-relevant.
 
 ### Data sources in detail
 
@@ -125,8 +125,8 @@ the technical pipeline (exact formats, field mappings, transforms, endpoints) se
   contract) is identical whether the fetch is live or precomputed.
 - **Why precomputed, not live:** Live current-temp barely varies across Tokyo (~1°C spread,
   not interesting to display) and the free tier rate-limits heavy grid calls. A stable
-  climatology demos better mid-interview and never 502s. The "live API going slow/down" story
-  for problem #7 uses the land-price proxy toggle instead.
+  climatology is more representative to display and never 502s. The "live API going slow/down"
+  scenario for problem #7 uses the land-price proxy toggle instead.
 - **Trap to note:** `[lon, lat]` vs spoken "lat, lon" — GeoJSON geometry coordinates are
   longitude-first, opposite of how we say them. Easy to flip and get points in the ocean.
   Also: a newly-added Elixir dep does **not** hot-load into a running BEAM.
@@ -192,7 +192,7 @@ Render hundreds–thousands of rows/parcels without jank.
 
 ### 2. Map integration
 - Mapbox GL JS / MapLibre fundamentals: sources, layers, fitBounds, clustering
-- Goal: be able to whiteboard "here's how I'd add a new data layer to a map" without hesitation
+- Goal: a clear, repeatable pattern for adding a new data layer to a map
 
 ### 3. Multi-layer overlay performance
 - Toggle 2–3 data layers (e.g. land price + population mesh + weather) on/off independently
@@ -210,19 +210,18 @@ Render hundreds–thousands of rows/parcels without jank.
 ### 6. Caching + debouncing expensive queries
 - Debounce/throttle map pan & zoom before firing new data requests
 - Simple client-side cache (in-memory, keyed by bounding box + zoom) to avoid refetching the same viewport
-- Goal: speak concretely about request cancellation (AbortController), debounce intervals, and stale-while-revalidate patterns
+- Goal: a concrete implementation of request cancellation (AbortController), debounce intervals, and stale-while-revalidate patterns
 
 ### 7. Graceful degradation
 - Simulate one data source being slow/down (artificial delay or error in the Phoenix proxy) and show the UI handling it — partial render, retry, visible source-level error state, rest of the app stays usable
-- Goal: have a real example of "what happens when one of your data sources fails" instead of a hypothetical
+- Goal: a working example of "what happens when one data source fails" rather than a hypothetical
 
 ## Explicit non-goals
 
 - No auth, no user accounts
 - No deployment polish — Railway deploy is enough to say "it's live," not to make it production-grade
 - No exhaustive dataset coverage — 2–3 layers is enough to demonstrate the *pattern*
-- Not meant to replace or compete with Kalima/tarik on the active job-search rotation
 
 ## Definition of done
 
-This project is "done" when you can, without notes, answer each of the 7 problems above with a specific implementation detail from this codebase — not in general terms. Once you can do that, stop building. Ship what exists, write up the README findings, move back to active applications.
+This project is "done" when each of the 7 problems above is demonstrable with a specific implementation detail from this codebase — not in general terms. Once that holds, the scope is complete: ship what exists rather than gold-plating it.
