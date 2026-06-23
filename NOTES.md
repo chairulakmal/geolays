@@ -67,7 +67,8 @@ Template per problem:
 
 ## 3. Multi-layer overlay performance
 - **What it does:** Three layers, each adding a new geometry type and performance concern:
-  1. **Weather** (139 blurred circle points) — sparse, always fast; establishes the baseline.
+  1. **Weather** (IDW raster PNG, `image` source + `raster` layer) — continuous temperature
+     field at any zoom, no discrete-dot artefacts. Sparse data, always fast.
   2. **Land price** (2,602 circle points) — added AFTER weather so the dense price layer draws
      on top; layer order is explicit (MapLibre renders in insertion order).
   3. **Buildings** (up to ~8k `Polygon` fill features, OSM Overpass, capped at `LIMIT=8000`) — added BEFORE the other two
@@ -75,8 +76,9 @@ Template per problem:
      toggles off by default so the initial map load stays fast.
 
   All three toggle independently via `setLayoutProperty(id, 'visibility', …)` driven by
-  `watch` on store refs (`MapView.client.vue`). Each source uses `setData` to update —
-  no layer teardown/recreate. Price encoded by both radius and colour (log-spaced stops).
+  `watch` on store refs (`MapView.client.vue`). Land price and buildings use `setData` /
+  `updateImage` to update in place — no layer teardown/recreate. Price encoded by both
+  radius and colour (log-spaced stops).
 
 - **Trade-off:** GeoJSON source (simple, fine at ≤10k features — MapLibre renders on
   the GPU) vs. vector tiles (worth it for 50k+ features / polygon simplification).
@@ -216,11 +218,12 @@ Template per problem:
   | 'error'), `weatherRetryTick` (incremented by `retryWeather()`). All three are
   independent of the land-price state — source-level isolation, not a global error flag.
 
-  **MapView** refactored weather into `setupWeatherLayer()` (adds empty source + layer
-  once) and `loadWeatherData()` (fetchable multiple times). A `watch([weatherFault,
-  weatherRetryTick], ...)` re-runs `loadWeatherData()` on fault-mode change or retry
-  click. On error: clears the source so the weather cloud visually disappears; on success:
-  `setData` + `setPaintProperty` to update the colour ramp.
+  **MapView** refactored weather into `setupWeatherLayer()` (adds `image` source +
+  `raster` layer once) and `loadWeatherData()` (fetchable multiple times). A
+  `watch([weatherFault, weatherRetryTick], ...)` re-runs `loadWeatherData()` on
+  fault-mode change or retry click. On error: resets to a 1×1 transparent PNG placeholder
+  so the layer visually disappears; on success: fetches PNG as a `Blob`, creates an object
+  URL, and calls `source.updateImage({ url })` + sets `tempDomain` for the legend.
 
   **ControlPanel**: status dot next to Weather (green/red/pulsing-gray); "Retry weather"
   button that appears only when `weatherStatus === 'error'`; fault `<select>` dropdown.
@@ -235,8 +238,9 @@ Template per problem:
     about faults) but adds an extra round-trip and state. Query-param injection is simpler
     to demo and makes the mechanism explicit in the network tab.
   - **Clearing the source on error vs. keeping stale data:** stale data could mislead users.
-    Clearing (`setData` with empty FeatureCollection) makes the error unambiguous at a glance:
-    the weather cloud disappears, the red dot appears, and the retry button shows.
+    Resetting to a transparent placeholder (`updateImage` with a 1×1 transparent PNG) makes
+    the error unambiguous at a glance: the temperature overlay disappears, the red dot
+    appears, and the retry button shows.
 
 - **Extending it:** show a timestamp on the error ("weather unavailable since 14:32");
   add exponential backoff to automatic retries; propagate `landPriceStatus` to the panel the

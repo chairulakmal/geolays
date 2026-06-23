@@ -21,8 +21,8 @@ section covers *why* each source was chosen (the narrative); this file is the *h
 | **Origin** | Open-Meteo Historical (archive) API — `https://archive-api.open-meteo.com/v1/archive`, variable `temperature_2m_mean` |
 | **License** | Weather data by Open-Meteo.com (CC BY 4.0) |
 | **Raw format** | JSON; one object per location (array for multiple coords), each with `daily.time[]` + `daily.temperature_2m_mean[]` |
-| **Stored** | `backend/priv/data/weather_summer_avg_tokyo.geojson` (committed, 139 features) |
-| **Served by** | `Backend.Weather` → `GET /api/layers/weather` |
+| **Stored** | `backend/priv/data/weather_summer_avg_tokyo.geojson` (139 features, kept for debugging) + `weather_tokyo_idw.png` (512×256 IDW raster, 44 KB) + `weather_tokyo_idw_meta.json` (tMin/tMax/ramp/bbox) |
+| **Served by** | `Backend.Weather` → `GET /api/layers/weather` (GeoJSON) · `GET /api/layers/weather/raster` (PNG) · `GET /api/layers/weather/meta` (JSON) |
 
 **Why precomputed:** live current-temp barely varies across Tokyo and the free API rate-limits
 frequent calls (502s). We compute a stable climatology once and commit the result.
@@ -30,7 +30,7 @@ frequent calls (502s). We compute a stable climatology once and commit the resul
 **Pipeline** — `backend/priv/data/weather_summer_avg.ingest.mjs` (re-run: `node weather_summer_avg.ingest.mjs`):
 1. Build a grid over mainland-Tokyo bbox (lon 138.94–139.92, lat 35.50–35.90). Longitude step
    `0.04°`; latitude step `= 0.04° × cos(meanLat)` so points are spaced **equally in screen
-   pixels** (Web Mercator stretches lat vs lon) → the frontend cloud overlaps evenly.
+   pixels** (Web Mercator stretches lat vs lon) → the IDW raster samples them evenly.
 2. **Clip** the grid to Tokyo: keep only points inside `tokyo_mainland.geojson` (ray-casting
    point-in-polygon). 139 points remain.
 3. Fetch `temperature_2m_mean` for **summers (Jun–Aug) of 2022, 2023, 2024** (one request/year).
@@ -112,33 +112,36 @@ CARTO Positron raster tiles (`*.basemaps.cartocdn.com/light_all/...`); attributi
 
 ## Frontend — how MapLibre consumes each layer
 
-The frontend applies **no data transformations** — it fetches each layer's normalized
-`FeatureCollection` (already in our one contract) and hands it straight to MapLibre. All
-map appearance (colour ramps, the temperature "cloud", log-scaled price colours) is
-*styling*, not data changes. The end-to-end shape of each layer is therefore:
+The frontend applies **no data transformations** — it fetches each layer's data and hands
+it straight to MapLibre. All map appearance (colour ramps, opacity, log-scaled price colours)
+is *styling*, not data changes. The presentation lives in
+`frontend/app/components/MapView.client.vue`; the Vue/Nuxt patterns behind it (reactivity,
+lifecycle, debounce) are catalogued in `CLAUDE.md` and the per-problem implementation notes
+in `NOTES.md` — **linked, not restated** here.
 
-> raw upstream → backend normalization (above) → `GET /api/layers/*` → MapLibre `source` →
-> MapLibre `layer` + paint expression → pixels.
+### Weather → IDW raster PNG served as an `image` source
 
-Every layer uses a `geojson` **source type** (not `vector`) — see the GeoJSON-vs-vector-tiles
-trade-off at the end. The presentation lives in `frontend/app/components/MapView.client.vue`;
-the Vue/Nuxt patterns behind it (reactivity, lifecycle, debounce) are catalogued in
-`CLAUDE.md` and the per-problem implementation notes in `NOTES.md` — **linked, not restated** here.
+The weather layer is a **pre-rendered PNG** rather than a GeoJSON point layer. The ingest
+script (`§1`) runs IDW (Inverse Distance Weighting, power=2) interpolation over a 512×256
+pixel grid covering the Tokyo bbox, clips pixels outside the Tokyo polygon to transparent
+(alpha=0), encodes the result as a PNG using Node's built-in `zlib.deflateSync` (no external
+deps), and commits it to `priv/data/`.
 
-### Weather → `circle` layer rendered as a blurred "cloud"
-
-- **Layer type:** `circle` (id `weather-cloud`), *not* `heatmap`. We want one translucent
-  blob per grid point, sized in screen pixels, that blends with its neighbours.
-- **Paint:** large `circle-radius` interpolated by zoom (`30px` at z9 → `480px` at z13),
-  `circle-blur: 1`, `circle-opacity: 0.4`. The blur + overlap is what turns 139 discrete
-  points into a continuous temperature field — hence the grid in `§1` is spaced *equally in
-  screen pixels* so the blobs overlap evenly.
-- **Colour encoding:** `circle-color` is data-driven on `temperature`, but the colour stops
-  are **stretched to the actual min/max of the fetched data**, not a fixed 0–32 °C scale.
-  Intra-Tokyo summer variation is only ~1–2 °C; a fixed scale would paint every point the
-  same colour. The same domain drives the on-map legend, so legend and map can't drift.
-- **Fetch model:** loaded **once** on map load (139 points is trivial), then re-fetchable for
-  retry / fault injection (problem #7). This is the only layer with a fault-injection path.
+- **Why raster, not circles:** the old approach used large blurred `circle` layers — discrete
+  dot artefacts appeared at zoom because the circles were visible as individual shapes.
+  A pre-rendered IDW field is continuous at any zoom level with no artefacts.
+- **Endpoints:** `GET /api/layers/weather/raster` — serves the PNG (supports `?fault=` for
+  problem #7). `GET /api/layers/weather/meta` — serves `{ tMin, tMax, ramp, bbox }` JSON for
+  the legend (no fault injection; the legend should survive a raster failure).
+- **MapLibre source type:** `image` (id `weather`), not `geojson`. Geographic corners of the
+  image are declared as `coordinates` matching the ingest bbox. The frontend fetches the PNG
+  as a `Blob`, creates an object URL, and calls `source.updateImage({ url })` — this gives
+  full error-handling control vs. letting MapLibre load the URL directly.
+- **Colour encoding:** the same 5-stop cold→hot ramp (`#2c7bb6 → #d7191c`) used in the
+  ingest is mirrored in the frontend legend, driven by `tMin`/`tMax` from the meta endpoint.
+- **Opacity:** `raster-opacity: 0.375` — translucent enough to read the basemap underneath.
+- **Fetch model:** loaded once on map load, re-fetchable for retry / fault injection
+  (problem #7). This is the only layer with a fault-injection path.
 
 ### Land price → `circle` layer, price encoded by radius *and* colour
 
