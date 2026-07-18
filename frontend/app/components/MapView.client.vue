@@ -7,7 +7,7 @@ import { useQueryStore, type ViewportFeature } from '~/stores/query'
 
 // MapLibre is a heavy, imperative, NON-reactive object. We keep the instance in
 // a plain closure variable — never a ref/reactive. Wrapping a GL map in a Vue
-// proxy serves no purpose and tanks performance. See CLAUDE.md trap #6.
+// proxy serves no purpose and tanks performance. See TRAPS.md trap #6.
 let map: maplibregl.Map | null = null
 
 const config = useRuntimeConfig()
@@ -15,7 +15,7 @@ const container = useTemplateRef<HTMLDivElement>('container')
 
 // Shared query state lives in the Pinia store; the ControlPanel writes it, the map
 // reads it (no prop drilling — problem #4). storeToRefs keeps reactivity when
-// destructuring store state (CLAUDE.md trap #1).
+// destructuring store state (TRAPS.md trap #1).
 const store = useQueryStore()
 const { showWeather, showLandPrice, showBuildings, priceMin, priceMax, viewportBbox, weatherFault, weatherRetryTick } = storeToRefs(store)
 
@@ -84,7 +84,7 @@ function formatYen(v: number): string {
 
 onMounted(async () => {
   // This component is `.client.vue`, so it never runs during SSR. MapLibre
-  // touches window/DOM and would crash on the server. See CLAUDE.md trap #4.
+  // touches window/DOM and would crash on the server. See TRAPS.md trap #4.
 
   // Wait one tick so the template ref is bound. Under client-only hydration the
   // ref can still be null when onMounted first fires; MapLibre then throws
@@ -357,7 +357,7 @@ function bboxCacheKey(bbox: [number, number, number, number], zoom: number): str
 //   4. Checks the in-memory cache; skips the network on a hit.
 //   5. Fetches with the current AbortController signal and caches the result.
 //
-// `watch` is the right tool here, not `watchEffect` (CLAUDE.md trap #3):
+// `watch` is the right tool here, not `watchEffect` (TRAPS.md trap #3):
 //   - `onCleanup` gives us the hook to cancel both the timer and the controller.
 //   - We want explicit dependency control — only [viewportBbox], not every reactive
 //     read inside the callback (which could accidentally track the cache Map).
@@ -491,7 +491,7 @@ watch([priceMin, priceMax], ([min, max]) => {
 
 onUnmounted(() => {
   // Symmetric teardown: dispose the GL context + listeners, or we leak across
-  // HMR and route changes. See CLAUDE.md trap #5.
+  // HMR and route changes. See TRAPS.md trap #5.
   weatherController?.abort()
   if (weatherObjectUrl) URL.revokeObjectURL(weatherObjectUrl)
   map?.remove()

@@ -5,11 +5,11 @@ import { storeToRefs } from 'pinia'
 import { useQueryStore } from '~/stores/query'
 
 const store = useQueryStore()
-// storeToRefs keeps reactivity when destructuring (CLAUDE.md trap #1).
+// storeToRefs keeps reactivity when destructuring (TRAPS.md trap #1).
 const { viewportFeatures, showLandPrice } = storeToRefs(store)
 
 // computed is cached — re-runs only when viewportFeatures changes, not on every
-// render. A plain method called in the template re-runs every render. See CLAUDE.md trap #8.
+// render. A plain method called in the template re-runs every render. See TRAPS.md trap #8.
 const displayRows = computed(() =>
   viewportFeatures.value.map((f) => ({
     price: fmt((f.properties.price_per_sqm as number) ?? 0),
@@ -29,7 +29,7 @@ const parentRef = ref<HTMLElement | null>(null)
 // typically 15–20 DOM nodes regardless of total count. Without this, v-for over
 // thousands of rows creates thousands of DOM nodes and causes scroll jank as Vue
 // diffs them on every update. This is the core lesson of problem #1.
-// See CLAUDE.md trap #7.
+// See TRAPS.md trap #7.
 //
 // Options are wrapped in computed() so the virtualizer reacts when displayRows
 // changes length. A plain options object would bake in the initial count.

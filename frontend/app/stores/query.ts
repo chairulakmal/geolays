@@ -17,7 +17,7 @@ export type ViewportFeature = { properties: Record<string, unknown> }
  * no prop drilling between them. See CLAUDE.md "Architecture conventions" + problems #4, #1.
  *
  * Setup-style store: refs are state, returned together. Consumers must use
- * `storeToRefs` to destructure without losing reactivity (CLAUDE.md trap #1).
+ * `storeToRefs` to destructure without losing reactivity (TRAPS.md trap #1).
  */
 export const useQueryStore = defineStore('query', () => {
   // Active layers — the map toggles MapLibre visibility from these.

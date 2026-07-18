@@ -2,7 +2,7 @@
 
 Per-problem record of how each of the 7 core problems is solved in this codebase: the actual
 mechanism, the trade-off behind it, and the gotcha worth knowing. Problem definitions and
-data-source descriptions live in `README.md`; Vue/Nuxt patterns in `CLAUDE.md` — **link, don't
+data-source descriptions live in `README.md`; Vue/Nuxt patterns in `TRAPS.md` — **link, don't
 restate.** This file captures only the *specifics from this codebase*.
 
 One block per problem, ordered by the build order in `CLAUDE.md`.
@@ -11,7 +11,7 @@ Template per problem:
 - **What it does:** the actual mechanism, with `file:line` pointers.
 - **Trade-off:** the choice made, the alternative rejected, and why.
 - **Extending it:** the one-sentence "how to add X".
-- **Trap (avoided):** the gotcha worth noting (link `CLAUDE.md` trap # if relevant).
+- **Trap (avoided):** the gotcha worth noting (link `TRAPS.md` trap # if relevant).
 
 ---
 
@@ -42,7 +42,7 @@ Template per problem:
   by `map.once('render', updateViewportFeatures)` instead of calling it immediately.
   Also: the virtualizer `count` must be reactive — passing a plain options object bakes
   in the initial count of 0. Fixed by wrapping the options in `computed()` so the
-  virtualizer re-layouts when `displayRows.length` changes. (CLAUDE.md trap #7, #8.)
+  virtualizer re-layouts when `displayRows.length` changes. (TRAPS.md trap #7, #8.)
 
 ## 2. Map integration
 - **What it does:** Full-screen MapLibre map over Tokyo in `frontend/app/components/MapView.client.vue`.
@@ -51,14 +51,14 @@ Template per problem:
   browser in `app/app.vue` to surface API status. (Step 1 of the build order.)
 - **Trade-off:** Raster OSM tiles (zero setup, no key) over vector tiles — fine now;
   vector tiles become worth it once we need data-driven styling/perf (problem #3). Map instance
-  kept as a plain closure var, not `ref`/`reactive` (CLAUDE.md trap #6).
+  kept as a plain closure var, not `ref`/`reactive` (TRAPS.md trap #6).
 - **Extending it:** add a `source` (GeoJSON) then one+ `layer`s referencing it; update
   data with `source.setData` rather than recreating the layer. That's exactly what step 2 does.
 - **Trap (avoided):** MapLibre needs the DOM → component is `.client.vue` so it never SSRs
   (trap #4); init in `onMounted`, `map.remove()` in `onUnmounted` to avoid HMR/nav leaks (trap #5).
   Also (step 2): the template ref was `null` in `onMounted` during client-only hydration →
   MapLibre threw "container must be a String or HTMLElement". Fix = single root element +
-  `await nextTick()` + guard (CLAUDE.md trap #11).
+  `await nextTick()` + guard (TRAPS.md trap #11).
 
   CORS (step 1): `cors_plug` in the endpoint, origins from `CORS_ORIGINS` env (default
   `localhost:3000`). Verified preflight 204 + `access-control-allow-origin` echo via curl.
@@ -130,7 +130,7 @@ Template per problem:
 - **Extending it:** add the list view reading the same store; add more filters (temp,
   use-category) as more store fields — no component plumbing changes.
 - **Trap (avoided):** destructuring a Pinia store drops reactivity — used `storeToRefs`
-  in both components (CLAUDE.md trap #1). Price slider is **log-scaled** since prices span 4+
+  in both components (TRAPS.md trap #1). Price slider is **log-scaled** since prices span 4+
   orders of magnitude; a linear slider would be unusable.
 
 ## 5. Merging/normalizing multiple sources
@@ -184,7 +184,7 @@ Template per problem:
     right for continuous events (e.g. a live cursor tracker). Pan fires `moveend` only AFTER
     the gesture ends, so `moveend` already throttles; the 300ms debounce handles bursts of
     rapid keypress panning.
-  - **`watch` + `onCleanup` vs `watchEffect`** (CLAUDE.md trap #3): `watch` gives us `onCleanup`
+  - **`watch` + `onCleanup` vs `watchEffect`** (TRAPS.md trap #3): `watch` gives us `onCleanup`
     for precise teardown — one hook cancels both the debounce timer AND the in-flight request.
     `watchEffect` would track every reactive read inside the callback (including `fetchCache.get`,
     which we don't want), and has no built-in onCleanup that fires per-dependency-change.
@@ -203,7 +203,7 @@ Template per problem:
   Calling `updateViewportFeatures` immediately after `setFilter` returns stale features.
   Fix: `map.once('render', updateViewportFeatures)`. Same principle applies after `setData`:
   `map.once('idle', updateViewportFeatures)` waits for MapLibre to finish rendering the new
-  source before querying it. (CLAUDE.md trap #3 for the `watch` design.)
+  source before querying it. (TRAPS.md trap #3 for the `watch` design.)
 
 ## 7. Graceful degradation
 - **What it does:** Three-part system: backend fault injection, per-source frontend status,

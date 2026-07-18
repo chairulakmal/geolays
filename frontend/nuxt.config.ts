@@ -11,7 +11,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       // Backend (Phoenix) base URL. Kept in runtimeConfig so the Railway deploy
-      // is a config change, not a code change — see CLAUDE.md trap #10.
+      // is a config change, not a code change — see TRAPS.md trap #10.
       // Override at runtime with NUXT_PUBLIC_API_BASE.
       apiBase: 'http://localhost:4000'
     }

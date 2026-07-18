@@ -49,10 +49,10 @@ choice. Conventions:
   what the code obviously does.
 - **Best practices and traps are called out explicitly.** Where a Vue/Nuxt pattern has a
   common pitfall (reactivity loss, SSR hydration, lifecycle leaks), the code comments name
-  the trap and the fix. The catalogue of these lives in `CLAUDE.md` so it isn't repeated.
+  the trap and the fix. The catalogue of these lives in `TRAPS.md` so it isn't repeated.
 - **Don't duplicate explanations.** Each concept is explained once, in one canonical place,
-  and linked from elsewhere. Data sources are explained here; implementation conventions and
-  Vue/Nuxt patterns live in `CLAUDE.md`. If you find yourself re-explaining, link instead.
+  and linked from elsewhere. Data sources are explained here; implementation conventions live
+  in `CLAUDE.md`; Vue/Nuxt patterns in `TRAPS.md`. If you find yourself re-explaining, link instead.
 
 ## Stack
 

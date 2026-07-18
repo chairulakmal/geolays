@@ -6,11 +6,11 @@ the decisions that are already made, the order to build in, and the guardrails.
 
 **Division of labour between the docs (so nothing is explained twice):**
 
-- `README.md` — the why, the scope, and the data sources *narrative* (why each was chosen).
-- `DATA.md` — canonical **data pipeline**: each source's origin, format, transforms, and endpoint.
-- `CLAUDE.md` (this file) — implementation decisions, build order, conventions, and the
-  **Vue/Nuxt best-practices & traps catalogue** (canonical).
-- **The code** — inline comments explaining the *why* of each non-obvious local decision.
+- `README.md`: the why, the scope, and the data sources *narrative* (why each was chosen).
+- `DATA.md`: canonical **data pipeline**, each source's origin, format, transforms, and endpoint.
+- `TRAPS.md`: canonical **Vue/Nuxt best-practices & traps catalogue**.
+- `CLAUDE.md` (this file): implementation decisions, build order, conventions, and guardrails.
+- **The code**: inline comments explaining the *why* of each non-obvious local decision.
 
 When you need to reference something explained in another place, **link to it; do not
 re-explain it.** Duplicated prose drifts out of sync — single source of truth always.
@@ -102,9 +102,7 @@ build). Concretely:
   Assume the reader knows Vue syntax but not *this* decision.
 - **Name the trade-off you rejected.** A one-line "could've done X; chose Y because Z" comment
   is worth more than paragraphs — it's literally interview prep.
-- **One explanation, one home.** If a concept already lives in the README or the catalogue
-  below, link to it (`see README "Data sources"` / `see CLAUDE.md trap #N`). Re-explaining is
-  the main thing to avoid — duplicated docs rot.
+- **One explanation, one home.** If a concept already lives in the README or the traps catalogue, link to it (`see README "Data sources"` / `see TRAPS.md trap #N`). Re-explaining is the main thing to avoid; duplicated docs rot.
 - **DRY the code too.** A normalization helper, a fetch-with-cancel wrapper, a bbox util —
   write once, reuse. Duplicated logic is both a code smell and a worse teaching example.
 
@@ -122,54 +120,9 @@ build). Concretely:
   the goal is to *demonstrate and be able to explain* a trade-off, not to squeeze ms. A
   small, clearly-commented example beats a clever opaque one.
 
-## Vue/Nuxt best practices & traps to demonstrate
+## Vue/Nuxt best practices & traps
 
-This is the **canonical catalogue** of the Vue/Nuxt patterns this project exists to learn.
-When you hit one of these in the code, leave a short comment naming the trap and the fix, and
-link back here (`see CLAUDE.md trap #N`) rather than re-explaining. These are also the
-interview talking points, so implement them deliberately, not by accident.
-
-1. **Reactivity loss when destructuring.** Destructuring `props`, a `reactive()` object, or a
-   Pinia store breaks reactivity — you copy the value, not the ref. *Fix:* `toRefs` /
-   `storeToRefs` for stores; access `props.x` directly. Relevant in the filter store wiring
-   (problem #4).
-2. **`ref` vs `reactive`.** Default to `ref` for primitives and for anything you reassign
-   wholesale (e.g. replacing a fetched array); `reactive` can't be reassigned without losing
-   reactivity. The viewport/feature lists are reassigned on every fetch — use `ref`.
-3. **`watch` vs `watchEffect` + cleanup.** For "refetch when bbox changes", `watch` the bbox
-   with an `onCleanup` that aborts the previous request — this is the natural home for the
-   `AbortController` (problem #6). `watchEffect` is the wrong tool when you need the old value
-   or precise dependency control.
-4. **SSR/hydration traps (Nuxt-specific).** MapLibre touches `window`/DOM and must **not**
-   render on the server. *Fix:* `<ClientOnly>` around the map, or init the map in `onMounted`,
-   or a `.client.vue` component. Don't read `window` at setup top-level. Avoid hydration
-   mismatches from time/locale-dependent rendering.
-5. **`onMounted`/`onUnmounted` lifecycle leaks.** The MapLibre instance, event listeners, and
-   any debounce timers must be torn down in `onUnmounted` (`map.remove()`), or you leak across
-   HMR and navigation. Create in `onMounted`, dispose symmetrically.
-6. **Don't make heavy non-reactive objects reactive.** The MapLibre `map` instance should be
-   a plain variable or `shallowRef` / `markRaw` — never a deep `ref`/`reactive`, or Vue will
-   try to proxy the whole GL object and tank performance. Classic trap; call it out.
-7. **`v-for` keys & not rendering huge lists.** Stable `:key` (a feature id, never the array
-   index for dynamic lists). And the core lesson of problem #1: don't `v-for` thousands of
-   rows into the DOM at all — window them with `@tanstack/vue-virtual`.
-8. **`computed` over methods for derived state.** Filtered/derived lists belong in `computed`
-   (cached, re-runs only on dependency change), not a method called in the template (re-runs
-   every render). Directly relevant to the filtered feature list (problem #4).
-9. **Nuxt data fetching: `useFetch`/`useAsyncData` vs `$fetch`.** Use `useFetch`/`useAsyncData`
-   for SSR-aware initial loads (dedupes, no double-fetch on hydration); use `$fetch` for
-   imperative, event-driven calls (a pan-triggered refetch). Picking wrong = double requests
-   or no SSR benefit.
-10. **`runtimeConfig` for the API base URL**, not hardcoded or raw `import.meta.env`. Keeps the
-    Railway deploy a config change, not a code change (see Repository layout).
-11. **Template refs in client-only components + `onMounted` timing.** In a `.client.vue`
-    component, a template ref can still be `null` when `onMounted` fires during hydration —
-    passing it straight to a library (e.g. `new maplibregl.Map({ container })`) throws
-    "container must be a String or HTMLElement". *Fix:* keep a single root element (a
-    multi-root/fragment template makes this worse), then `await nextTick()` and guard
-    (`if (!container.value) return`) before using it. (Hit in `MapView.client.vue`, step 2.)
-
-Add to this list as you discover more — keep it the single place these are recorded.
+The canonical catalogue lives in [`TRAPS.md`](TRAPS.md); code comments cite entries as `see TRAPS.md trap #N`, and new traps get added there, never here. Two worth knowing before touching the map: never make the MapLibre `map` instance deeply reactive (trap #6), and never touch `window`/DOM at setup top-level in anything server-rendered (trap #4).
 
 ## Guardrails
 
@@ -183,23 +136,6 @@ Add to this list as you discover more — keep it the single place these are rec
 
 ## Running
 
-> **Do NOT start the dev servers.** The author runs `mix phx.server` and `npm run dev` in
-> their own terminals and keeps them up across the session (both have hot-reload, so code
-> changes are picked up automatically). Never launch, restart, or kill them. To verify
-> backend changes, `curl` the running server on :4000; for the frontend, rely on its HMR or
-> ask the author to check the browser. Compiling to check for errors (`mix compile`,
-> `npx nuxt prepare`) is fine — running the servers is not.
+> **Do NOT start the dev servers.** The author runs `mix phx.server` and `npm run dev` in their own terminals and keeps them up across the session (both hot-reload). Never launch, restart, or kill them. To verify backend changes, `curl` the running server on :4000; for the frontend, rely on its HMR or ask the author to check the browser. Compiling to check for errors (`mix compile`, `npx nuxt prepare`) is fine; running the servers is not.
 
-- **Frontend** (Nuxt 4, Node 24 + npm): `cd frontend && npm install && npm run dev`
-  → http://localhost:3000. Backend URL is in `runtimeConfig.public.apiBase`
-  (default `http://localhost:4000`); override with `NUXT_PUBLIC_API_BASE`.
-- **Backend** (Phoenix 1.8, JSON API, no Ecto): `cd backend && mix deps.get && mix phx.server`
-  → http://localhost:4000.
-
-Frontend deps already installed: `maplibre-gl`, `pinia`, `@pinia/nuxt`, `@tanstack/vue-virtual`.
-Backend was generated with `--no-ecto --no-html --no-assets --no-mailer --no-gettext
---no-dashboard` (no DB — serves static GeoJSON from `priv/` and proxies live APIs).
-
-**Not yet wired (first implementation steps, see build order):** CORS on the Phoenix
-endpoint for the frontend origin, and the first data-layer route. Stores go in
-`frontend/app/stores/`.
+Setup, run commands, ports, deps, and env vars: `README.md` § Quickstart (dev) and § Tech stack summary. Pinia stores live in `frontend/app/stores/`.

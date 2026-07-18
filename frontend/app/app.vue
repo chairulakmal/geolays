@@ -7,7 +7,7 @@ const apiStatus = ref<'checking' | 'ok' | 'down'>('checking')
 // Ping the backend from the BROWSER on mount. We use $fetch (not useFetch) on
 // purpose: the point of step 1 is to prove a cross-origin browser→API call
 // succeeds — i.e. CORS is configured. A useFetch would run during SSR on the
-// Nuxt server and never exercise the browser CORS path. See CLAUDE.md trap #9.
+// Nuxt server and never exercise the browser CORS path. See TRAPS.md trap #9.
 onMounted(async () => {
   try {
     const res = await $fetch<{ status: string }>('/api/health', {

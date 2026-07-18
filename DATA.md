@@ -116,7 +116,7 @@ The frontend applies **no data transformations** — it fetches each layer's dat
 it straight to MapLibre. All map appearance (colour ramps, opacity, log-scaled price colours)
 is *styling*, not data changes. The presentation lives in
 `frontend/app/components/MapView.client.vue`; the Vue/Nuxt patterns behind it (reactivity,
-lifecycle, debounce) are catalogued in `CLAUDE.md` and the per-problem implementation notes
+lifecycle, debounce) are catalogued in `TRAPS.md` and the per-problem implementation notes
 in `NOTES.md` — **linked, not restated** here.
 
 ### Weather → IDW raster PNG served as an `image` source

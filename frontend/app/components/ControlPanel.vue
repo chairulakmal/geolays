@@ -10,7 +10,7 @@ const store = useQueryStore()
 
 // storeToRefs keeps reactivity when pulling state out of the store. Plain
 // destructuring (`const { priceMin } = store`) would copy the value and break
-// two-way binding. See CLAUDE.md trap #1.
+// two-way binding. See TRAPS.md trap #1.
 const { showWeather, showLandPrice, showBuildings, priceMin, priceMax, weatherFault, weatherStatus } = storeToRefs(store)
 
 // Land price is log-distributed (¥1.5k–¥53.8M), so the sliders operate in log
