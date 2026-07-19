@@ -34,7 +34,7 @@ These resolve the README's open questions so you can move without asking:
   Use a free raster/vector basemap style (e.g. a public demo style or OSM raster tiles).
 - **Datasets: start with exactly 2** — Open-Meteo (weather) and MLIT land price; e-Stat
   population mesh is a stretch third only if the first two are solid. See the README's
-  "Data sources in detail" for what each source is, its shape, and its quirks — don't
+  "Data sources" narrative and `DATA.md` for what each source is, its shape, and its quirks — don't
   duplicate that here. Two layers is enough to demonstrate multi-layer overlay + normalization.
 - **State: Pinia**, not ad-hoc composables, for the shared cross-component query state
   (filters, layer toggles, viewport). Thin composables may wrap Pinia stores for ergonomics.
@@ -138,4 +138,4 @@ The canonical catalogue lives in [`TRAPS.md`](TRAPS.md); code comments cite entr
 
 > **Do NOT start the dev servers.** The author runs `mix phx.server` and `npm run dev` in their own terminals and keeps them up across the session (both hot-reload). Never launch, restart, or kill them. To verify backend changes, `curl` the running server on :4000; for the frontend, rely on its HMR or ask the author to check the browser. Compiling to check for errors (`mix compile`, `npx nuxt prepare`) is fine; running the servers is not.
 
-Setup, run commands, ports, deps, and env vars: `README.md` § Quickstart (dev) and § Tech stack summary. Pinia stores live in `frontend/app/stores/`.
+Setup, run commands, ports, deps, and env vars: `README.md` § Running locally and § Stack. Pinia stores live in `frontend/app/stores/`.

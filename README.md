@@ -1,227 +1,79 @@
 # geolays
 
-A frontend-heavy B2B geo-data dashboard, built to learn the specific skills a real-estate geo-intelligence product actually needs from a frontend engineer. This is a **learning spike, not a portfolio piece** — scope is intentionally narrow and time-boxed. Backend is a thin Phoenix data server; almost all the interesting work happens in Vue.
+A frontend-heavy geo-data dashboard for Tokyo: a Nuxt 4 + MapLibre GL client over a thin Phoenix JSON API, built as a deliberately time-boxed learning spike around seven engineering problems a real-estate geo-intelligence frontend actually faces. Its distinctive hook: three open datasets of three different shapes (a non-geospatial weather API, government land-price points, OSM building polygons) all reach the browser as one normalized GeoJSON contract, and the polygon layer is intentionally sized at the point where GeoJSON stops scaling. Below: the highlights, the stack, how to run it locally, the seven problems, the data-source narrative, how the repo is written, and the scope; [ARCHITECTURE.md](ARCHITECTURE.md) walks the design decisions.
 
-## Quickstart (dev)
+## Highlights
 
-**Prerequisites:** Node 24 + npm, Elixir 1.17 / Erlang OTP 27 (with Hex: `mix local.hex`).
+- The weather layer is not a point layer but a pre-rendered raster. [backend/priv/data/weather_summer_avg.ingest.mjs](backend/priv/data/weather_summer_avg.ingest.mjs) builds a Tokyo grid spaced equally in screen pixels (the latitude step is scaled by the cosine of the mean latitude to undo Web Mercator stretch), clips it to the mainland polygon by ray casting, averages three summers of Open-Meteo archive data, interpolates a 512x256 IDW field, and encodes the PNG with nothing but Node's built-in zlib. MapLibre displays it as an `image` source, so the temperature field is continuous at every zoom with no dot artefacts.
+- The GeoJSON ceiling was discovered empirically, then designed around. The first buildings ingest returned 206,971 features (~150 MB of GeoJSON), so [backend/priv/data/buildings.ingest.mjs](backend/priv/data/buildings.ingest.mjs) caps the committed dataset at 8,000 Shinjuku-core polygons and the frontend fetches buildings per viewport instead of loading the file whole. The path to full-Tokyo scale (tippecanoe to PMTiles to a MapLibre `vector` source) is written down in [DATA.md](DATA.md), not hand-waved.
+- Normalization lives in the backend, one module per source. The raw 8 MB MLIT land-price file is committed byte-for-byte, and [backend/lib/backend/land_price.ex](backend/lib/backend/land_price.ex) maps its opaque coded fields (`L01_006` to `price_per_sqm`) into a clean documented contract at serve time, dropping the ~134 fields the frontend never needs. All three source modules share [backend/lib/backend/geojson_file.ex](backend/lib/backend/geojson_file.ex), a `:persistent_term` cache keyed by file mtime, so an edited data file is picked up on the next request without a restart.
+- Pan and zoom are treated as expensive queries. A `watch` with `onCleanup` in [frontend/app/components/MapView.client.vue](frontend/app/components/MapView.client.vue) debounces the viewport bbox by 300 ms, aborts the in-flight request with an `AbortController`, and consults an in-memory cache keyed by rounded bbox plus zoom; the price filter is a MapLibre `setFilter` expression, so filtering hides and shows points with no refetch at all.
+- The map, the control panel, and the list are siblings with zero props or events between them; the single Pinia store [frontend/app/stores/query.ts](frontend/app/stores/query.ts) is the only channel. The side panel ([frontend/app/components/FeatureList.vue](frontend/app/components/FeatureList.vue)) windows the visible features with `@tanstack/vue-virtual` and is fed by `queryRenderedFeatures`, so the list always agrees with what the GPU actually drew.
+- Failure is a per-source state, not a global one. The weather endpoints accept `?fault=error|delay` ([backend/lib/backend_web/controllers/weather_controller.ex](backend/lib/backend_web/controllers/weather_controller.ex)), and the UI shows a per-source status dot and a retry button while the land-price layer stays fully interactive; on error the raster resets to a transparent placeholder instead of showing stale data.
+- Every non-obvious Vue/Nuxt pattern in the code cites a numbered entry in [TRAPS.md](TRAPS.md), an 11-trap catalogue (reactivity loss, SSR/hydration, lifecycle leaks, template-ref timing) that doubles as the project's interview notes. The per-problem record of what was built and why is [NOTES.md](NOTES.md).
 
-Run each app in its own terminal:
+## Stack
+
+| Layer | What the code pins |
+|---|---|
+| Frontend | Nuxt 4.4.8, Vue 3.5.38, TypeScript, Pinia 3.0.4 (@pinia/nuxt 0.11.3) |
+| Map | MapLibre GL JS 5.24.0, no token; CARTO Positron raster basemap |
+| Virtualized list | @tanstack/vue-virtual 3.13.29 |
+| API | Phoenix 1.8.8 on Bandit 1.12, Elixir (`~> 1.15` in mix.exs, developed on 1.17 / OTP 27), cors_plug 3.0.3, Req 0.6.2 |
+| Data store | None. Committed GeoJSON and PNG in [backend/priv/data/](backend/priv/data), cached in `:persistent_term` |
+| Deploy | Railway with the Railpack builder ([backend/railway.json](backend/railway.json), [frontend/railway.json](frontend/railway.json)) |
+
+## Running locally
+
+Prerequisites: Node 24 + npm, Elixir 1.17 / Erlang OTP 27 (with Hex: `mix local.hex`).
 
 ```bash
-# Backend — Phoenix JSON API → http://localhost:4000
+# 1. Backend: Phoenix JSON API on :4000
 cd backend
-mix setup          # fetch + compile deps (first run only)
+mix setup          # fetch deps (first run only)
 mix phx.server
 
-# Frontend — Nuxt app → http://localhost:3000
+# 2. Frontend: Nuxt app on :3000, in a second terminal
 cd frontend
 npm install        # first run only
 npm run dev
 ```
 
-Open <http://localhost:3000>: a full-screen MapLibre map over Tokyo with a green
-**API: ok** badge (confirms the frontend reached the backend through CORS).
+Open [localhost:3000](http://localhost:3000): a full-screen MapLibre map over Tokyo with a green **API: ok** badge (confirms the frontend reached the backend through CORS). The frontend reads the backend URL from `runtimeConfig.public.apiBase` (default `http://localhost:4000`); override with `NUXT_PUBLIC_API_BASE`. The backend's allowed CORS origins come from `CORS_ORIGINS` (default `http://localhost:3000`).
 
-The frontend reads the backend URL from `runtimeConfig.public.apiBase` (default
-`http://localhost:4000`); override with `NUXT_PUBLIC_API_BASE`. The backend's allowed
-CORS origins come from `CORS_ORIGINS` (default `http://localhost:3000`).
+## The seven problems
 
-## Why this exists
+The project's definition of done: each problem below is demonstrable with a specific implementation detail from this codebase, not in general terms. The per-problem record (mechanism, trade-off, trap avoided) lives in [NOTES.md](NOTES.md); this list is the map.
 
-A B2B real-estate geo-intelligence product combines geographic data with other sources for real estate professionals. That implies a different skill set than a typical consumer app:
+1. **Large dataset rendering.** A side-panel list of the features in the viewport, windowed with `@tanstack/vue-virtual` so thousands of rows never hit the DOM. ([NOTES.md §1](NOTES.md))
+2. **Map integration.** The Mapbox GL fundamentals, via MapLibre: sources, layers, layer ordering, and a repeatable pattern for adding a data layer. ([NOTES.md §2](NOTES.md))
+3. **Multi-layer overlay performance.** Three independently toggleable layers of three geometry types (raster, circles, polygon fills), and the GeoJSON-vs-vector-tiles trade-off made concrete. ([NOTES.md §3](NOTES.md))
+4. **State management for filter-heavy UIs.** One Pinia store as the shared source of truth for viewport, toggles, and filters; no prop drilling. ([NOTES.md §4](NOTES.md))
+5. **Merging/normalizing multiple sources.** Backend modules normalize heterogeneous upstreams into one GeoJSON contract; the frontend does zero reshaping. ([NOTES.md §5](NOTES.md))
+6. **Caching + debouncing expensive queries.** Debounced bbox fetches, `AbortController` cancellation, and an in-memory viewport cache. ([NOTES.md §6](NOTES.md))
+7. **Graceful degradation.** Backend fault injection plus per-source error state and retry, so one broken feed never takes down the dashboard. ([NOTES.md §7](NOTES.md))
 
-- Power users staring at dense data all day, not casual browsers
-- Maps as the primary UI, not a secondary feature
-- Multiple data sources that need to be merged, normalized, and degrade gracefully
-- Heavy, frequent queries (pan/zoom/filter) that need to feel instant
+## Data sources
 
-This project picks one thin vertical slice through each of those problems and builds just enough to demonstrate it concretely.
+Region is Tokyo throughout. Each source was picked to represent a different shape of upstream; the full pipeline (formats, field mappings, transforms, endpoints) is in [DATA.md](DATA.md), one section per source. Why each one:
+
+- **Open-Meteo weather (chosen)**: a free per-point JSON API that is not geospatial out of the box, so it represents the "geo-enable and normalize a non-geographic source" case. Precomputed as a 2022-2024 summer climatology rather than fetched live, because live current-temp barely varies across Tokyo and the free tier rate-limits grid calls. ([DATA.md §1](DATA.md))
+- **MLIT 国土数値情報 land price (chosen)**: the official 地価公示 appraisal points, a bulk-download dataset that is already geospatial but hides its meaning behind coded field names, so it represents the "static bulk file that needs field normalization" case. 2,602 points with a real price field to filter on. ([DATA.md §2](DATA.md))
+- **OSM building footprints via Overpass (chosen)**: the first polygon layer, up to 8,000 Shinjuku-core footprints, deliberately sized to sit at the GeoJSON performance boundary. For production you would swap in PLATEAU data; the pipeline shape is identical. ([DATA.md §3](DATA.md))
+- **e-Stat census population mesh (stretch, not built)**: the ideal heavy-polygon vehicle for vector-tile work, but only worth adding once the core layers are solid.
+
+A classic quirk threads through all of them: GeoJSON coordinates are `[lon, lat]`, the opposite of spoken "lat, lon" and of Overpass's `{lat, lon}` objects. Flip them in the ingest or every feature lands in the ocean.
 
 ## Learning-first: how this repo is written
 
-This is a **learning project**, so the code and docs are deliberately over-explained. The
-goal is not just working software — it's a clear written rationale for every non-obvious
-choice. Conventions:
-
-- **Explain the "why", not the "what".** Comments and docs justify decisions (why debounce
-  at this interval, why normalize on the backend, why window the list) — they don't restate
-  what the code obviously does.
-- **Best practices and traps are called out explicitly.** Where a Vue/Nuxt pattern has a
-  common pitfall (reactivity loss, SSR hydration, lifecycle leaks), the code comments name
-  the trap and the fix. The catalogue of these lives in `TRAPS.md` so it isn't repeated.
-- **Don't duplicate explanations.** Each concept is explained once, in one canonical place,
-  and linked from elsewhere. Data sources are explained here; implementation conventions live
-  in `CLAUDE.md`; Vue/Nuxt patterns in `TRAPS.md`. If you find yourself re-explaining, link instead.
-
-## Stack
-
-- **Frontend:** Nuxt 4 (Vue 3 Composition API, TypeScript)
-- **Map:** MapLibre GL JS — chosen over Mapbox to avoid a token/billing; APIs are near-identical so the fundamentals carry over
-- **State:** Pinia (shared cross-component query state — viewport, filters, layer toggles)
-- **Virtualized list:** `@tanstack/vue-virtual`
-- **Backend:** Phoenix (Elixir), JSON API only — no business logic, just serves/proxies/normalizes datasets
-- **Data sources:** open datasets only (see below)
-- **Deploy:** Railway (Railpack builder, consistent with other projects)
-
-Repo is a monorepo: `/frontend` (Nuxt) and `/backend` (Phoenix), talking over HTTP/JSON.
-See `CLAUDE.md` for the implementation guide (decisions, build order, conventions).
-
-### Tech stack summary
-
-Concrete versions as scaffolded (the prose above covers the *why*; this is the quick reference).
-
-| Area | Choice | Version | Role |
-|---|---|---|---|
-| Runtime (frontend) | Node.js + npm | Node 24, npm 11 | Build/dev toolchain for Nuxt |
-| Framework (frontend) | Nuxt | 4.4 | Vue 3.5 app, Composition API + `<script setup>`, TypeScript |
-| Map | MapLibre GL JS | 5.x | WebGL map — sources/layers, no token |
-| State | Pinia + `@pinia/nuxt` | 3.x / 0.11 | Shared query state (viewport, filters, layer toggles) |
-| Virtualized list | `@tanstack/vue-virtual` | 3.x | Windowed side-panel list synced to the viewport |
-| Runtime (backend) | Erlang/OTP + Elixir | OTP 27, Elixir 1.17 | BEAM runtime for Phoenix |
-| Framework (backend) | Phoenix | 1.8 | JSON API only (`--no-ecto --no-html --no-assets`) |
-| HTTP server | Bandit | 1.x | Phoenix's web server |
-| CORS | `cors_plug` | 3.x | Allows the browser frontend to call the API cross-origin |
-| Data store | _none_ | — | No DB — static GeoJSON from `priv/` (all three layers precomputed/ingested + committed) |
-| Deploy | Railway | — | Railpack builder (never Nixpacks) |
-
-**Data sources:** Open-Meteo (weather, precomputed static climatology) + MLIT 国土数値情報 land price (bulk GeoJSON) + OSM building footprints (polygons via Overpass); e-Stat population mesh is a stretch. Detailed below.
-
-## Open datasets to mirror real-estate geo-intelligence data layers
-
-Pick 2–3 to keep scope sane. Don't try to integrate all of these. **Chosen for the
-spike (✓):** Open-Meteo weather + MLIT land price. e-Stat population mesh is a stretch
-goal only if the first two are solid and time remains. Region is Tokyo throughout.
-
-| Layer | Candidate source | Mirrors | Status |
-|---|---|---|---|
-| Parcels / administrative boundaries | Japan e-Stat / MLIT national land numerical info | zoning-style polygon layer | skipped |
-| Weather/temperature | Open-Meteo API (free, no key) | "other source" overlay | ✓ chosen |
-| Population/demographics | e-Stat census mesh data | demographics layer | stretch |
-| Land price | MLIT 国土数値情報 land price data | pricing layer | ✓ chosen |
-| Building footprints | OSM via Overpass API (polygon layer) | polygon rendering at scale | ✓ chosen |
-
-All of these are public/open and Tokyo-relevant.
-
-### Data sources in detail
-
-Understanding the *shape and quirks* of each source is half the point — the real work
-is merging messy, heterogeneous data. This section is the narrative (*why* each source); for
-the technical pipeline (exact formats, field mappings, transforms, endpoints) see
-**[DATA.md](DATA.md)**.
-
-#### Open-Meteo (weather/temperature) — ✓ chosen
-
-- **What:** Free public weather API. No API key, no signup, generous rate limits.
-- **Access:** Archive REST API — `https://archive-api.open-meteo.com/v1/archive`, variable
-  `temperature_2m_mean`. We used the live endpoint initially; see below for why we switched.
-  Docs: <https://open-meteo.com/en/docs>.
-- **Shape:** Per-point JSON — *not* geospatial out of the box. We geo-enable it by building a
-  mainland-Tokyo grid, fetching each point, and assembling a GeoJSON `FeatureCollection` with
-  temperature in `properties`. That grid is **precomputed once** (2022–2024 summer mean, 139
-  points) and committed to `priv/` — see `DATA.md §1` for the full pipeline.
-- **Why chosen:** Represents the "non-geographic source we must geo-enable and normalize" case.
-  The normalization lesson (isolate upstream quirks in one backend module, emit the shared
-  contract) is identical whether the fetch is live or precomputed.
-- **Why precomputed, not live:** Live current-temp barely varies across Tokyo (~1°C spread,
-  not interesting to display) and the free tier rate-limits heavy grid calls. A stable
-  climatology is more representative to display and never 502s. The "live API going slow/down"
-  scenario for problem #7 uses the land-price proxy toggle instead.
-- **Trap to note:** `[lon, lat]` vs spoken "lat, lon" — GeoJSON geometry coordinates are
-  longitude-first, opposite of how we say them. Easy to flip and get points in the ocean.
-  Also: a newly-added Elixir dep does **not** hot-load into a running BEAM.
-
-#### MLIT 国土数値情報 land price (pricing layer) — ✓ chosen
-
-- **What:** National Land Numerical Information (国土数値情報) from Japan's MLIT — the
-  official land price datasets (地価公示 / 都道府県地価調査): government-appraised price
-  points with price per m², address, and land-use category.
-- **Access:** *Bulk download*, not a live API — Shapefile/GeoJSON per prefecture from
-  <https://nlftp.mlit.go.jp/ksj/>. Download Tokyo once, convert to GeoJSON if needed, and
-  serve the static file from the Phoenix backend (`priv/`).
-- **Shape:** Already geospatial — a `FeatureCollection` of point features. Light enough to
-  serve whole, but big enough to make the virtualized list (problem #1) meaningful.
-- **Why chosen:** Represents the "static, already-geographic, bulk dataset" case — the
-  counterpart to Open-Meteo. Together the two show normalizing *two different shapes* into
-  one internal contract (problem #5), and a real price field to filter on (problem #4).
-- **Trap to note:** Japanese field names and encodings (Shift-JIS in some MLIT files). Part
-  of the lesson is normalizing these into clean English property keys on the backend.
-
-#### OSM building footprints (polygon layer) — ✓ chosen
-
-- **What:** OpenStreetMap building footprint polygons for the **Shinjuku ward (新宿区) core**,
-  fetched from the Overpass API. Equivalent geometry to MLIT PLATEAU LOD0 (2D footprints).
-  Up to **~8k** `Polygon` features (capped at 8,000 in the ingest) over the bbox
-  `35.677,139.685,35.715,139.745` — a small, dense central-Tokyo box, deliberately scoped.
-- **Access:** Overpass API, no key (the ingest tries three public mirrors and uses the first
-  that responds — the main `overpass-api.de` host 406s in some networks). See
-  `priv/data/buildings.ingest.mjs` for the query; `DATA.md §3` for the full pipeline.
-  For production, replace with PLATEAU GeoJSON from `https://www.geospatial.jp/ckan/dataset`
-  (larger coverage, official source, same pipeline structure).
-- **Shape:** GeoJSON `FeatureCollection` of `Polygon`s. Properties: `building` type,
-  `name`, `name_en`, `height` (metres), `levels` (floor count), all nullable except `building`.
-- **Why chosen:** The first polygon layer — both prior layers are points. Polygons unlock
-  `fill` + `fill-extrusion` layers and make the GeoJSON-ceiling question concrete: at
-  ~8k features you can feel the parse time vs. the point layers. At 50k+ features (full
-  23 wards), you'd switch to `tippecanoe` → PMTiles and a `vector` source type in
-  MapLibre. This layer is sized to sit at that boundary deliberately (problem #3) — the
-  first ingest against a wider bbox returned 207k features (~150 MB), which is exactly the
-  ceiling this layer exists to demonstrate.
-- **Trap to note:** Overpass coordinates are `{lat, lon}` objects; GeoJSON `Polygon`
-  rings want `[lon, lat]` arrays — longitude first, opposite of Overpass convention
-  (and of spoken "lat, lon"). Flip them in the ingest, or buildings appear in the ocean.
-  Also: GeoJSON rings must be closed (last coord equals first coord).
-
-#### e-Stat census population mesh (demographics) — stretch only
-
-- **What:** Population/demographics from e-Stat (Japan's official statistics portal),
-  published as **mesh** data — values attached to a regular grid of polygons.
-- **Access:** API with a free key (<https://www.e-stat.go.jp/>), or bulk mesh downloads.
-- **Shape:** Many small **polygons** (the grid cells) — a much heavier geometry set than the
-  point layers above.
-- **Why stretch, not core:** It's the ideal vehicle for problem #3 (polygon-set rendering
-  performance, vector tiles vs. GeoJSON, clustering at low zoom) — but only worth adding once
-  the two point layers are solid, because polygon volume introduces real perf work.
-
-## Core problems this project is built to answer
-
-### 1. Large dataset rendering
-Render hundreds–thousands of rows/parcels without jank.
-- Virtualized table (e.g. `@tanstack/vue-virtual` or similar) for a side-panel list view synced to the map viewport
-- Goal: explain trade-offs between windowing the DOM vs. canvas/WebGL rendering for huge lists
-
-### 2. Map integration
-- Mapbox GL JS / MapLibre fundamentals: sources, layers, fitBounds, clustering
-- Goal: a clear, repeatable pattern for adding a new data layer to a map
-
-### 3. Multi-layer overlay performance
-- Toggle 2–3 data layers (e.g. land price + population mesh + weather) on/off independently
-- Investigate: layer ordering, opacity, clustering at low zoom, vector tiles vs. GeoJSON for large polygon sets
-- Goal: articulate *why* performance degrades with naive GeoJSON-everything approaches and what fixes it
-
-### 4. State management for filter-heavy UIs
-- Composable-based filter state (price range, data layer toggles, date/time for weather) that stays in sync with the map and the list view
-- Goal: demonstrate a clean Pinia or composable pattern for shared, cross-component query state — not prop drilling
-
-### 5. Merging/normalizing multiple sources
-- Phoenix backend serves/normalizes 2+ open sources (Open-Meteo weather + MLIT land price) into one shape
-- Goal: explain where normalization should live (backend vs. frontend) and why — a core geo-intelligence architecture question
-
-### 6. Caching + debouncing expensive queries
-- Debounce/throttle map pan & zoom before firing new data requests
-- Simple client-side cache (in-memory, keyed by bounding box + zoom) to avoid refetching the same viewport
-- Goal: a concrete implementation of request cancellation (AbortController), debounce intervals, and stale-while-revalidate patterns
-
-### 7. Graceful degradation
-- Simulate one data source being slow/down (artificial delay or error in the Phoenix proxy) and show the UI handling it — partial render, retry, visible source-level error state, rest of the app stays usable
-- Goal: a working example of "what happens when one data source fails" rather than a hypothetical
+This is a learning project, so the code and docs are deliberately over-explained: comments justify decisions (why this debounce interval, why normalize on the backend) rather than restating what the code does, and each concept is explained once in one canonical home. Data narrative here, pipeline in [DATA.md](DATA.md), per-problem notes in [NOTES.md](NOTES.md), Vue/Nuxt patterns in [TRAPS.md](TRAPS.md), implementation conventions in [CLAUDE.md](CLAUDE.md). If something re-explains, it links instead.
 
 ## Explicit non-goals
 
 - No auth, no user accounts
-- No deployment polish — Railway deploy is enough to say "it's live," not to make it production-grade
-- No exhaustive dataset coverage — 2–3 layers is enough to demonstrate the *pattern*
+- No deployment polish. A Railway deploy is enough to say "it's live," not to make it production-grade
+- No exhaustive dataset coverage. Three layers is enough to demonstrate the pattern
 
-## Definition of done
+## Architecture
 
-This project is "done" when each of the 7 problems above is demonstrable with a specific implementation detail from this codebase — not in general terms. Once that holds, the scope is complete: ship what exists rather than gold-plating it.
+[ARCHITECTURE.md](ARCHITECTURE.md) walks the six decisions that carry the codebase, each with the choice, the reasoning, and the trade-off accepted: one normalized GeoJSON contract with backend-side normalization, precomputed datasets over live proxying, a single Pinia store with MapLibre kept imperative, debounce-abort-cache viewport fetching, a buildings layer parked at the GeoJSON ceiling on purpose, and per-source failure handling.
